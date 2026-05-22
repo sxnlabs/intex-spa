@@ -478,6 +478,23 @@ DHCP lease wasn't reserved. Go back to **§ 2.3**, reserve the lease, then
 update `INTEX_SPA_HOST` in the LaunchAgent (re-run `install.sh` with the new
 IP — it regenerates the plist).
 
+**Spa unreachable but visible on the router as connected.**
+You're on a VPN that captures *all* traffic, including LAN ranges. The
+LaunchAgent inherits the same routing, so it can't reach the spa either —
+`healthz` returns `{"online": false}` even though the spa is happily sitting
+on your LAN. Two ways to confirm:
+
+```bash
+traceroute -m 3 <spa-ip>     # hop 1 is your VPN's tun interface, not your router
+arp -n <spa-ip>              # → "no entry": routing never tried the local subnet
+```
+
+Fix in the VPN client: enable "**Allow LAN connections**" (Mullvad: *Local
+network sharing*; ProtonVPN: *Allow LAN connections*; NordVPN: turn off
+*Invisibility on LAN*; Tailscale/WireGuard: add an exclude route for the
+spa's subnet). Reconnect — `ping <spa-ip>` should answer instantly and the
+service picks the spa back up on its next poll.
+
 **The housse classifier keeps drifting between night and day.**
 Expected — the baselines are luma-based, and luma drops 30+ points after dark.
 Either re-calibrate ON twice (day + night, the algo will use the closest of
