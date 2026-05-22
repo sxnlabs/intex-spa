@@ -6,7 +6,7 @@ minutes if everything works first try, longer if Protect creds or ngrok need a
 detour.
 
 If you're migrating *from* an existing Mac and want to keep history /
-calibration / passwords, jump to **§ 9 — Restore state from backup** first.
+calibration / passwords, jump to **§ 10 — Restore state from backup** first.
 
 ---
 
@@ -20,7 +20,102 @@ calibration / passwords, jump to **§ 9 — Restore state from backup** first.
 - Stay on power. Macs throttle background tasks (incl. our poll loop) when on
   battery + asleep.
 
-## 2. Homebrew + system packages
+## 2. Network setup — stable IPs + firewall
+
+The app addresses the spa and (optionally) the UniFi camera/UDM by IP. Those
+IPs must not drift on DHCP renewals, or your config breaks every couple of
+weeks. Do this **once per device**, then forget it.
+
+### 2.1 — Pair the spa to your wifi
+
+Use the Intex iOS app to add the spa to your home wifi (its "Add a device"
+flow). Once paired, the spa exposes its TCP/8990 control port on the LAN —
+that's all this repo speaks to. You can uninstall the Intex app afterwards;
+it's never spoken to again.
+
+### 2.2 — Find the spa's MAC + current IP
+
+Either:
+
+- **UniFi controller**: Settings → **Insights** → **Known Clients** → look for
+  an Intex/Tuya-prefixed MAC. Note the assigned IP.
+- **Generic** (any router, any LAN): from the Mac, scan for hosts that answer
+  on the spa's control port. Skip everything that doesn't.
+  ```bash
+  # adjust the subnet to your LAN
+  for ip in 192.168.20.{1..254}; do
+    nc -zw1 "$ip" 8990 2>/dev/null && echo "spa: $ip"
+  done
+  ```
+  Or `nmap -p 8990 --open 192.168.20.0/24` if you have nmap installed.
+
+### 2.3 — Reserve a static DHCP lease for the spa
+
+The lease tells the router "always hand this MAC the same IP". The spa itself
+stays on DHCP — no need to change anything on the spa side.
+
+**UDM Pro / UniFi Network**:
+1. Settings → **Clients** → click the spa.
+2. Settings ⚙ → **Fixed IP Address** → toggle on, accept the current IP (or
+   pick a new one inside your DHCP range).
+3. Unplug + replug the spa's power brick so it picks up the lease on its next
+   DHCP request.
+
+**Generic router**: most have a "DHCP reservation" or "Static lease" table
+under LAN settings. Add the spa's MAC → the IP you want.
+
+The IP you reserve here is the value you'll paste into `INTEX_SPA_HOST=` in
+**§ 7 — Install the LaunchAgent**.
+
+### 2.4 — Same treatment for the camera + UDM (if you'll use the camera)
+
+If you plan to enable feature 2 / 3 / 4 (snapshot, housse detection,
+timelapse — see **§ 9**), repeat **2.2 + 2.3** for the camera and for the
+UniFi Protect controller (the UDM itself, or a UNVR). The Protect host IP
+goes into `state/camera.json` → `protect.host`; the camera IP shows up
+inside the RTSPS URL you'll grab from the Protect UI.
+
+### 2.5 — (Optional) Firewall: only your Mac reaches the spa
+
+The spa firmware has **no authentication and no encryption**. Anyone on the
+same LAN can `nc <spa-ip> 8990` and control it directly, bypassing this app.
+Defense-in-depth: a UniFi traffic rule that drops everything to that host:port
+except your Mac.
+
+UniFi Network → Settings → **Security** → **Traffic Rules** → *New rule*:
+
+| Field | Value |
+|---|---|
+| Type | LAN In |
+| Action | Block |
+| Source | Any |
+| Destination | IP `<spa-ip>`, port `8990` |
+| Add exception | Source = Mac's IP (reserve it too — § 2.3 style) |
+
+Verify from your phone (or another LAN device that's not the Mac):
+`nc -zw1 <spa-ip> 8990` should fail.
+
+### 2.6 — (Optional) Block the spa's WAN egress
+
+The spa's wifi module phones home and can accept firmware updates from Tuya.
+A "Block all outbound" rule scoped to the spa's IP shuts both off without
+affecting your LAN control:
+
+UniFi Network → Settings → **Security** → **Traffic Rules** → *New rule*:
+type **Internet**, action **Block**, source IP = `<spa-ip>`.
+
+### 2.7 — Sanity check from the Mac
+
+```bash
+ping -c 3 <spa-ip>                 # ICMP — basic L3 reachability
+nc -zv <spa-ip> 8990               # spa control port (silent success = ok)
+nc -zv <udm-ip> 7441 2>/dev/null   # UniFi Protect RTSPS, only if using camera
+```
+
+If any of these fails, fix the network before going further. Every later step
+assumes the Mac can reach these.
+
+## 3. Homebrew + system packages
 
 ```bash
 # Homebrew (skip if already installed):
@@ -38,9 +133,9 @@ ffmpeg -version | head -1     # → "ffmpeg version 7.x" or 8.x
 uv --version                  # → "uv 0.x"
 ```
 
-ngrok is **§ 7** — optional, for remote (iPhone) access.
+ngrok is **§ 8** — optional, for remote (iPhone) access.
 
-## 3. Clone the repo
+## 4. Clone the repo
 
 ```bash
 mkdir -p ~/Hermes/apps
@@ -54,7 +149,7 @@ cd spa
 Working directory is now `~/Hermes/apps/spa`. **Every command from here on
 assumes you're in that directory.**
 
-## 4. Bootstrap the venv
+## 5. Bootstrap the venv
 
 ```bash
 # .python-version pins CPython 3.12 (3.14 silently segfaulted under launchd
@@ -78,12 +173,12 @@ uv run pytest -q
 If anything is red, fix it before going further — every later step assumes a
 green suite.
 
-## 5. Configure (`state/camera.json` + `state/.password`)
+## 6. Configure (`state/camera.json` + `state/.password`)
 
 The `state/` directory is gitignored — runtime state never reaches git. You
 have to recreate it locally.
 
-### 5.1 — camera config
+### 6.1 — camera config
 
 `state/camera.json` is the master switch for the camera subsystem. Empty / missing
 ⇒ the whole subsystem is off (every endpoint returns `{"enabled": false}`, UI
@@ -139,9 +234,9 @@ the muxer from the filename extension and the in-app `.tmp` atomic-write file
 makes it silently hang. The test pinned in the suite enforces this; don't strip
 it.
 
-### 5.2 — UI password (`state/.password`)
+### 6.2 — UI password (`state/.password`)
 
-If you'll expose the UI through ngrok (§ 7), put a strong password here. The
+If you'll expose the UI through ngrok (§ 8), put a strong password here. The
 file is the alternative to setting `HERMES_PASSWORD` as an env var; the
 launchd plist reads `state/.password` automatically.
 
@@ -156,7 +251,7 @@ Skip this only if you're sure the UI will stay bound to `127.0.0.1` and no
 tunnel is opened. The install script will warn you if you bind `0.0.0.0`
 without a password.
 
-### 5.3 — ROI + baselines (calibration, run after § 6)
+### 6.3 — ROI + baselines (calibration, run after § 7)
 
 These are recorded **through the UI** after the LaunchAgent is up, not by hand
 editing — the live frame is needed:
@@ -172,11 +267,11 @@ editing — the live frame is needed:
 
 You can re-do these at any time — they're idempotent.
 
-## 6. Install the LaunchAgent
+## 7. Install the LaunchAgent
 
 ```bash
-INTEX_SPA_HOST=<your_spa_ip> ./install.sh
-# e.g. INTEX_SPA_HOST=192.168.20.189 ./install.sh
+INTEX_SPA_HOST=<spa-ip> ./install.sh
+# the spa IP is the one you reserved in § 2.3
 ```
 
 What this does (read `install.sh` for the full story):
@@ -214,18 +309,18 @@ Watch a frame land:
 ls -la state/cam.jpg          # appears within ~10 s
 ```
 
-## 7. Remote access via ngrok (optional)
+## 8. Remote access via ngrok (optional)
 
 Skip this if you'll only ever access the UI from this Mac.
 
-### 7.1 — Install + authenticate ngrok
+### 8.1 — Install + authenticate ngrok
 
 ```bash
 brew install --cask ngrok
 ngrok config add-authtoken <your-ngrok-authtoken>   # from dashboard.ngrok.com
 ```
 
-### 7.2 — Tunnel config
+### 8.2 — Tunnel config
 
 ngrok 3 stores its config at `~/Library/Application Support/ngrok/ngrok.yml`.
 Reserve a stable subdomain at dashboard.ngrok.com first (or use a random
@@ -243,7 +338,7 @@ endpoints:
       url: 8731
 ```
 
-### 7.3 — Run ngrok at boot via launchd
+### 8.3 — Run ngrok at boot via launchd
 
 Create `~/Library/LaunchAgents/com.sxnlabs.ngrok.plist`:
 
@@ -275,7 +370,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sxnlabs.ngrok.plist
 launchctl print gui/$(id -u)/com.sxnlabs.ngrok | grep state    # → running
 ```
 
-### 7.4 — Verify the public URL
+### 8.4 — Verify the public URL
 
 ```bash
 curl -s http://127.0.0.1:4040/api/tunnels | python3 -m json.tool | grep public_url
@@ -292,7 +387,7 @@ curl -s https://<your-subdomain>.ngrok.io/healthz
 Then in iPhone Safari, open the public URL, type the password from
 `state/.password`, save to Keychain on first prompt.
 
-## 8. Optional: UniFi Protect creds (feature 2 — activity overlay)
+## 9. Optional: UniFi Protect creds (feature 2 — activity overlay)
 
 The "in use" green bands on the temperature chart come from UniFi Protect's
 person-detection events. Skip this unless you actually want them.
@@ -309,9 +404,9 @@ person-detection events. Skip this unless you actually want them.
    # → "protect_enabled": true
    ```
 
-## 9. Restore state from backup (migrating)
+## 10. Restore state from backup (migrating)
 
-If you have access to the old Mac, copy these files **before** doing § 5 — they
+If you have access to the old Mac, copy these files **before** doing § 6 — they
 contain irreplaceable runtime state and would otherwise have to be redone:
 
 ```bash
@@ -335,7 +430,7 @@ What's inside `state/`:
 `chmod 600` `state/.password` again after the copy — `scp` may not preserve
 mode.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 **Service won't stay up; `runs` keeps incrementing.**
 Check `state/spa.err.log`. The two failure modes I've actually hit:
@@ -348,7 +443,7 @@ Check `state/spa.err.log`. The two failure modes I've actually hit:
   `Python-*.ips` files.
 
 **"ffmpeg timeout" in `/api/camera/status`.**
-Run the standalone ffmpeg command from § 5.1 manually. If that works but the
+Run the standalone ffmpeg command from § 6.1 manually. If that works but the
 service can't reach the camera, the most likely cause is that you forgot
 `-f image2` in `intex_spa/camera.py::build_cmd` (don't — the test enforces it).
 Second most likely: an inter-VLAN firewall rule blocks the Mac → camera path
@@ -361,12 +456,17 @@ tries to forward to it. Wait 30 s and refresh. If persistent, check
 `state/ngrok-agent.stdout.log` for `failed to open private leg` errors —
 that's the spa process being unreachable from ngrok, not a tunnel issue.
 
+**The spa's IP changed after a router reboot.**
+DHCP lease wasn't reserved. Go back to **§ 2.3**, reserve the lease, then
+update `INTEX_SPA_HOST` in the LaunchAgent (re-run `install.sh` with the new
+IP — it regenerates the plist).
+
 **The housse classifier keeps drifting between night and day.**
 Expected — the baselines are luma-based, and luma drops 30+ points after dark.
 Either re-calibrate ON twice (day + night, the algo will use the closest of
 the two), or use the manual override (⚙ → Auto / En place / Retirée).
 
-## 11. Uninstall
+## 12. Uninstall
 
 Total teardown:
 
