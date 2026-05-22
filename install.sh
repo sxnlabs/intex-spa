@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Install the spa controller as a user LaunchAgent (com.sxnlabs.spa).
 #
-#   INTEX_SPA_HOST=192.168.20.189 ./install.sh            # localhost only
-#   HERMES_HOST=0.0.0.0 INTEX_SPA_HOST=192.168.20.189 ./install.sh   # reachable from the iPhone
+#   INTEX_SPA_HOST=<spa-ip> ./install.sh            # localhost only
+#   HERMES_HOST=0.0.0.0 INTEX_SPA_HOST=<spa-ip> ./install.sh   # reachable from the iPhone
 #
 set -euo pipefail
 cd "$(dirname "$0")"
 WORKDIR="$(pwd)"
 
-SPA_HOST="${INTEX_SPA_HOST:?set INTEX_SPA_HOST, e.g. INTEX_SPA_HOST=192.168.20.189}"
+SPA_HOST="${INTEX_SPA_HOST:?set INTEX_SPA_HOST, e.g. INTEX_SPA_HOST=<spa-ip>}"
 SPA_PORT="${INTEX_SPA_PORT:-8990}"
 POLL="${INTEX_SPA_POLL:-10}"
 BIND="${HERMES_HOST:-127.0.0.1}"   # 0.0.0.0 to expose on the LAN

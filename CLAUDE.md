@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Single-process FastAPI web app that replaces the Intex iOS app for an Intex PureSpa (Baltik) on the LAN. Talks raw TCP to the spa's wifi module on port 8990. No cloud, no vendor SDK, protocol reverse-engineered from `mathieu-mp/aio-intex-spa` and validated against the real device (192.168.20.189). The README is the canonical product spec — read it before this file for context.
+Single-process FastAPI web app that replaces the Intex iOS app for an Intex PureSpa (Baltik) on the LAN. Talks raw TCP to the spa's wifi module on port 8990. No cloud, no vendor SDK, protocol reverse-engineered from `mathieu-mp/aio-intex-spa` and validated against the real device (<spa-ip>). The README is the canonical product spec — read it before this file for context.
 
 ## Commands
 
 ```bash
 # dev (auto-reload, single process)
-INTEX_SPA_HOST=192.168.20.189 uv run uvicorn web.main:make_app --factory --reload
+INTEX_SPA_HOST=<spa-ip> uv run uvicorn web.main:make_app --factory --reload
 
 # all tests (offline — no spa needed; uses tests/fake_spa.py)
 uv run pytest -q
@@ -19,11 +19,11 @@ uv run pytest -q
 uv run pytest tests/test_schedule.py::test_ready_by_leads_in -q
 
 # read-only protocol diagnostic against the real device (stdlib only)
-python3 probe.py 192.168.20.189
+python3 probe.py <spa-ip>
 python3 probe.py --selftest
 
 # install as a LaunchAgent (com.sxnlabs.spa)
-INTEX_SPA_HOST=192.168.20.189 ./install.sh
+INTEX_SPA_HOST=<spa-ip> ./install.sh
 ```
 
 Test config lives in `pyproject.toml`: `asyncio_mode = "auto"` (no `@pytest.mark.asyncio` needed), `pythonpath = [".", "tests"]`.

@@ -3,7 +3,7 @@
 Run with uvicorn's factory mode (single worker — never more, or you'd get N
 supervisors fighting over the spa's single-client socket):
 
-    INTEX_SPA_HOST=192.168.20.189 uvicorn web.main:make_app --factory --workers 1
+    INTEX_SPA_HOST=<spa-ip> uvicorn web.main:make_app --factory --workers 1
 
 The UI is HTMX + the SSE extension (assets vendored under static/vendor): the panel
 re-renders on every state push from the supervisor's poll loop; buttons POST commands
@@ -37,7 +37,7 @@ from intex_spa.history import TempHistory
 from intex_spa.protect_client import ProtectPoller
 from intex_spa.scheduler import Scheduler
 from intex_spa.supervisor import Supervisor
-from intex_spa.weather import GUIPAVAS_LAT, GUIPAVAS_LON, WeatherClient
+from intex_spa.weather import DEFAULT_LAT, DEFAULT_LON, WeatherClient
 
 from . import auth
 
@@ -73,8 +73,8 @@ def create_app(
     secret_path: str = "state/.secret",
     schedule_path: str | None = "state/schedule.json",
     weather_enabled: bool = True,
-    weather_lat: float = GUIPAVAS_LAT,
-    weather_lon: float = GUIPAVAS_LON,
+    weather_lat: float = DEFAULT_LAT,
+    weather_lon: float = DEFAULT_LON,
     weather_cache_path: str | None = "state/weather.json",
     camera_config_path: str | None = "state/camera.json",
 ) -> FastAPI:
@@ -487,13 +487,13 @@ def make_app() -> FastAPI:
     """uvicorn --factory entry point. Reads config from the environment."""
     host = os.environ.get("INTEX_SPA_HOST")
     if not host:
-        raise RuntimeError("INTEX_SPA_HOST is required (e.g. 192.168.20.189)")
+        raise RuntimeError("INTEX_SPA_HOST is required (the spa wifi module IP on your LAN)")
     return create_app(
         host,
         port=int(os.environ.get("INTEX_SPA_PORT", protocol.PORT)),
         poll_interval=float(os.environ.get("INTEX_SPA_POLL", "10")),
         password=_configured_password(),
         weather_enabled=os.environ.get("WEATHER_ENABLED", "1") not in ("0", "false", "no", ""),
-        weather_lat=float(os.environ.get("WEATHER_LAT", GUIPAVAS_LAT)),
-        weather_lon=float(os.environ.get("WEATHER_LON", GUIPAVAS_LON)),
+        weather_lat=float(os.environ.get("WEATHER_LAT", DEFAULT_LAT)),
+        weather_lon=float(os.environ.get("WEATHER_LON", DEFAULT_LON)),
     )

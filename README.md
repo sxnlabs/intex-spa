@@ -1,9 +1,17 @@
 # spa — local web control for the Intex PureSpa (Baltik)
 
-Replaces the Intex iOS app with a single-process web UI served from the Mac.
-Talks directly to the spa's wifi module over the LAN (TCP/8990, no cloud, no auth).
-Protocol reverse-engineered from [`mathieu-mp/aio-intex-spa`](https://github.com/mathieu-mp/aio-intex-spa)
-and validated byte-for-byte against the real device (192.168.20.189) on 2026-05-22.
+Replaces the Intex iOS app with a single-process web UI served from a Mac on
+your LAN. Talks directly to the spa's wifi module over TCP/8990 — no cloud, no
+vendor account, no auth. Protocol reverse-engineered from
+[`mathieu-mp/aio-intex-spa`](https://github.com/mathieu-mp/aio-intex-spa) and
+validated byte-for-byte against a real PureSpa Baltik.
+
+**What you get on top of `aio-intex-spa`:** a mobile-first web UI, a weather-aware
+heat scheduler (pre-heats earlier when it's cold outside), a built-in camera
+subsystem (snapshot, daily timelapse, optional UniFi Protect activity overlay,
+experimental spa-cover ON/OFF detection), and a launchd service that's
+debugged for the silent failure modes you'll hit otherwise. Built for one
+specific Mac → spa setup; the code is licensed permissively so you can fork.
 
 ## Layout
 
@@ -39,7 +47,7 @@ Dev:
 ```bash
 cd ~/Hermes/apps/spa
 uv sync
-INTEX_SPA_HOST=192.168.20.189 uv run uvicorn web.main:make_app --factory --reload
+INTEX_SPA_HOST=<spa-ip> uv run uvicorn web.main:make_app --factory --reload
 ```
 
 Tests (no hardware needed):
@@ -51,8 +59,8 @@ uv run pytest -q
 Probe the spa directly (read-only, zero deps):
 
 ```bash
-python3 probe.py 192.168.20.189            # one shot
-python3 probe.py 192.168.20.189 --watch 10 # poll
+python3 probe.py <spa-ip>            # one shot
+python3 probe.py <spa-ip> --watch 10 # poll
 python3 probe.py --selftest                # offline decode check
 ```
 
@@ -60,9 +68,9 @@ python3 probe.py --selftest                # offline decode check
 
 ```bash
 # localhost only:
-INTEX_SPA_HOST=192.168.20.189 ./install.sh
+INTEX_SPA_HOST=<spa-ip> ./install.sh
 # reachable from the iPhone on the LAN:
-HERMES_HOST=0.0.0.0 INTEX_SPA_HOST=192.168.20.189 ./install.sh
+HERMES_HOST=0.0.0.0 INTEX_SPA_HOST=<spa-ip> ./install.sh
 ```
 
 Config (env vars): `INTEX_SPA_HOST` (required), `INTEX_SPA_PORT` (8990),
@@ -74,12 +82,12 @@ Uninstall: `launchctl bootout gui/$(id -u)/com.sxnlabs.spa && rm ~/Library/Launc
 ## Security — read this before exposing it
 
 **The spa firmware has no authentication and no encryption.** Anyone who can open a
-TCP socket to `192.168.20.189:8990` can control it directly, bypassing this app
+TCP socket to `<spa-ip>:8990` can control it directly, bypassing this app
 entirely. The single-client quirk (only one TCP client at a time) is a race, not a
 control. The real protection is **network-level**:
 
 - On the UDM Pro, keep the spa on the IoT VLAN and add a firewall rule so **only the
-  Mac's IP** can reach `192.168.20.189:8990`; drop everything else.
+  Mac's IP** can reach `<spa-ip>:8990`; drop everything else.
 - **Block the spa's WAN egress** (stops phone-home and a possible Tuya firmware push).
 
 The app's **optional password** (`HERMES_PASSWORD`, or `state/.password`) is
@@ -126,7 +134,7 @@ installer warns if you bind `0.0.0.0` without a password.
 - **macOS sleep** suspends the LaunchAgent. Enable *Settings → Energy → Wake for
   network access* (and keep the Mac on power) to stay reachable from the phone.
 - **Inter-VLAN.** The spa is on the IoT VLAN; the Mac/phone must be allowed to reach
-  `192.168.20.189:8990` (UDM firewall rule) or sit on the same VLAN.
+  `<spa-ip>:8990` (UDM firewall rule) or sit on the same VLAN.
 - **Assets are vendored** under `static/vendor/` (htmx, the SSE extension, Chart.js) —
   no CDN, works fully offline. Re-vendor with `npm i` + copy if you bump versions.
 - Temperature setpoint is bounded to 20–40 °C (`protocol.TEMP_MIN_C/MAX_C`).
@@ -165,7 +173,8 @@ rest, filter, learned rate).
 
 The spa loses heat (and so climbs slower) roughly in proportion to (water − outside air),
 so the "ready by" lead must grow when it's cold. `intex_spa/weather.py` is a cached,
-dependency-free Open-Meteo client for **Guipavas** (48.45, −4.42): it fetches the hourly
+dependency-free Open-Meteo client (location set via `WEATHER_LAT` / `WEATHER_LON` env
+vars; defaults to Brest, France — change them for yours): it fetches the hourly
 forecast (real air, apparent/feels-like, wind) in a worker thread, caches it in memory +
 `state/weather.json` (30 min TTL), and degrades gracefully (keeps the last good forecast
 on any error). Read helpers (`air_now`, `air_window`, `low_ahead`, `snapshot`) are pure
@@ -184,7 +193,7 @@ The heat-rate fed to the pre-heat math is computed by `schedule.effective_heat_r
 
 A colder forecast lowers the effective rate → `evaluate`'s `lead = gap / rate` grows → the
 window opens earlier. `GET /weather` returns the snapshot plus the live `rate_explain`
-and `preheat` (target, computed start, lead hours); the UI's **Météo · Guipavas** card
+and `preheat` (target, computed start, lead hours); the UI's **Météo extérieure** card
 shows current conditions and spells out the algorithm's decision so it's auditable.
 
 Config (env, defaults shown): `WEATHER_ENABLED=1`, `WEATHER_LAT=48.45`, `WEATHER_LON=-4.42`.
@@ -201,12 +210,12 @@ UI card is not rendered. The full shape (gitignored — never committed):
 
 ```json
 {
-  "rtsps_url": "rtsps://192.168.0.1:7441/<TOKEN>?enableSrtp",
+  "rtsps_url": "rtsps://<udm-ip>:7441/<TOKEN>?enableSrtp",
   "poll_seconds": 10,
   "snapshot_max_width": 1280,
   "jpeg_quality": 7,
   "timelapse_retention_days": 7,
-  "protect": { "host": "192.168.0.1", "user": "", "pass": "" },
+  "protect": { "host": "<udm-ip>", "user": "", "pass": "" },
   "roi": null
 }
 ```

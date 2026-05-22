@@ -1,15 +1,19 @@
 """Outside-weather client (Open-Meteo) — cached, dependency-free, fail-soft.
 
 Drives the scheduler's pre-heat lead: the spa loses heat (and so heats slower)
-roughly in proportion to (water − outside air), so a cold/windy forecast means the
-"ready by" window must start earlier. We fetch the hourly forecast for Guipavas,
-cache it (in memory + on disk so we survive restarts and don't hammer the API), and
-expose pure interpolation helpers the scheduler reads each tick.
+roughly in proportion to (water − outside air), so a cold/windy forecast means
+the "ready by" window must start earlier. We fetch the hourly forecast for the
+configured location, cache it (in memory + on disk so we survive restarts and
+don't hammer the API), and expose pure interpolation helpers the scheduler
+reads each tick.
 
-No third-party HTTP dependency: the blocking `urllib` fetch runs in a worker thread
-so it never stalls the event loop. Every network path is best-effort — on any error
-we keep the last good forecast (stale-but-useful) and the caller falls back to the
-weather-agnostic heat-rate estimate.
+No third-party HTTP dependency: the blocking `urllib` fetch runs in a worker
+thread so it never stalls the event loop. Every network path is best-effort —
+on any error we keep the last good forecast (stale-but-useful) and the caller
+falls back to the weather-agnostic heat-rate estimate.
+
+Location is configurable via `WEATHER_LAT` / `WEATHER_LON` env vars; defaults
+below point at Brest, France (the author's location — change them for yours).
 
 Source: https://open-meteo.com/ (free, no API key).
 """
@@ -26,9 +30,9 @@ from pathlib import Path
 
 _LOG = logging.getLogger("intex_spa.weather")
 
-# Guipavas (Brest-Bretagne) — Nathan's spa is here.
-GUIPAVAS_LAT = 48.45
-GUIPAVAS_LON = -4.42
+# Defaults — override with WEATHER_LAT / WEATHER_LON env vars in the LaunchAgent.
+DEFAULT_LAT = 48.45
+DEFAULT_LON = -4.42
 _URL = "https://api.open-meteo.com/v1/forecast"
 
 
@@ -44,8 +48,8 @@ class WeatherClient:
 
     def __init__(
         self,
-        lat: float = GUIPAVAS_LAT,
-        lon: float = GUIPAVAS_LON,
+        lat: float = DEFAULT_LAT,
+        lon: float = DEFAULT_LON,
         *,
         cache_path: str | Path | None = "state/weather.json",
         ttl: float = 1800.0,      # 30 min between fetches

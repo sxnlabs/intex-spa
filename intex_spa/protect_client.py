@@ -40,7 +40,7 @@ class ProtectPoller:
     """Poll a UniFi Protect controller for person-detection events.
 
     Usage:
-        poller = ProtectPoller("192.168.0.1", "user", "pass", usage_store, lookback_hours=2)
+        poller = ProtectPoller("<udm-host>", "user", "pass", usage_store, lookback_hours=2)
         await poller.start()
         ...
         await poller.stop()

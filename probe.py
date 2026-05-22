@@ -9,8 +9,8 @@ Protocol reproduced byte-exact from mathieu-mp/aio-intex-spa (verified against
 its test vectors via --selftest). Stdlib only — runs on system python3, no deps.
 
 Usage:
-    python3 probe.py 192.168.20.42        # live probe
-    python3 probe.py 192.168.20.42 --watch 10   # poll every 10s (Ctrl-C to stop)
+    python3 probe.py <spa-ip>        # live probe
+    python3 probe.py <spa-ip> --watch 10   # poll every 10s (Ctrl-C to stop)
     python3 probe.py --selftest           # offline: prove decode vs gold vectors
 """
 
