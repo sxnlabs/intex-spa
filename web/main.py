@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import json as _json
 import os
 import time as _time
 from contextlib import asynccontextmanager
@@ -39,17 +40,18 @@ from intex_spa.scheduler import Scheduler
 from intex_spa.supervisor import Supervisor
 from intex_spa.weather import DEFAULT_LAT, DEFAULT_LON, WeatherClient
 
-from . import auth
+from . import auth, i18n
 
 _BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(_BASE / "templates"))
 
-# functions exposed in the UI for this model (Baltik: no jets, no sanitizer)
+# functions exposed in the UI for this model (Baltik: no jets, no sanitizer).
+# The middle element is a *translation key*; the template renders it through t().
 UI_TOGGLES = [
-    ("power", "Power", "⚡"),
-    ("heater", "Chauffage", "🔥"),
-    ("filter", "Filtration", "🌀"),
-    ("bubbles", "Bulles", "🫧"),
+    ("power", "toggle.power", "⚡"),
+    ("heater", "toggle.heater", "🔥"),
+    ("filter", "toggle.filter", "🌀"),
+    ("bubbles", "toggle.bubbles", "🫧"),
 ]
 
 
@@ -61,6 +63,7 @@ def _fmt_ts(epoch: float | None) -> str:
 
 templates.env.filters["ts"] = _fmt_ts
 templates.env.globals["ui_toggles"] = UI_TOGGLES
+templates.env.globals["LANGS"] = i18n.LANGS
 
 
 def create_app(
@@ -185,14 +188,55 @@ def create_app(
                 return PlainTextResponse("authentication required", status_code=401)
             return await call_next(request)
 
+    # Lang middleware. Registered LAST so it executes FIRST (FastAPI runs
+    # middlewares in reverse registration order). `?lang=` is consumed here:
+    # we store it in a cookie and redirect to the same URL without the param —
+    # bookmarks and shared links stay clean.
+    @app.middleware("http")
+    async def _lang_mw(request: Request, call_next):
+        q_lang = request.query_params.get("lang")
+        if q_lang in i18n.LANGS:
+            kept = {k: v for k, v in request.query_params.multi_items() if k != "lang"}
+            from urllib.parse import urlencode
+            qs = ("?" + urlencode(kept, doseq=True)) if kept else ""
+            resp = RedirectResponse(f"{request.url.path}{qs}", status_code=303)
+            resp.set_cookie("lang", q_lang, max_age=60 * 60 * 24 * 365, httponly=False, samesite="lax")
+            return resp
+        request.state.lang = i18n.detect(
+            request.cookies.get("lang"),
+            request.headers.get("accept-language"),
+        )
+        return await call_next(request)
+
+    def _ctx(request: Request, **extra) -> dict:
+        """Template context with lang + per-render closures.
+
+        `t` and `i18n_bundle_json` are closures bound to the current request's
+        lang. We pass them in the render context rather than as Jinja globals
+        because Starlette's `Jinja2Templates` doesn't always propagate
+        `@pass_context`-decorated globals (resolution comes up "undefined").
+        Per-request closures sidestep that entirely.
+        """
+        lang = getattr(request.state, "lang", i18n.DEFAULT_LANG)
+        def _t(key: str, **params: object) -> str:
+            return i18n.t(lang, key, **params)
+        def _bundle_json() -> str:
+            return _json.dumps(i18n.bundle(lang))
+        return {
+            "lang": lang,
+            "t": _t,
+            "i18n_bundle_json": _bundle_json,
+            **extra,
+        }
+
     def render_panel(request: Request):
-        return templates.TemplateResponse(request, "_panel.html", {"s": supervisor.state})
+        return templates.TemplateResponse(request, "_panel.html", _ctx(request, s=supervisor.state))
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_form(request: Request):
         if not password:
             return RedirectResponse("/", status_code=303)
-        return templates.TemplateResponse(request, "login.html", {"error": False})
+        return templates.TemplateResponse(request, "login.html", _ctx(request, error=False))
 
     @app.post("/login")
     async def login_submit(request: Request):
@@ -208,18 +252,19 @@ def create_app(
                 samesite="lax",
             )
             return resp
-        return templates.TemplateResponse(request, "login.html", {"error": True}, status_code=401)
+        return templates.TemplateResponse(request, "login.html", _ctx(request, error=True), status_code=401)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         return templates.TemplateResponse(
             request,
             "index.html",
-            {
-                "s": supervisor.state,
-                "spa_host": host,
-                "camera_enabled": camera is not None,
-            },
+            _ctx(
+                request,
+                s=supervisor.state,
+                spa_host=host,
+                camera_enabled=camera is not None,
+            ),
         )
 
     @app.get("/panel", response_class=HTMLResponse)
@@ -441,14 +486,15 @@ def create_app(
                         for it in intervals)
         return templates.TemplateResponse(
             request, "recap.html",
-            {
-                "date": d,
-                "min_t": min(temps) if temps else None,
-                "max_t": max(temps) if temps else None,
-                "samples": len(pts),
-                "intervals": intervals,
-                "total_use_minutes": round(total_use / 60),
-            },
+            _ctx(
+                request,
+                date=d,
+                min_t=min(temps) if temps else None,
+                max_t=max(temps) if temps else None,
+                samples=len(pts),
+                intervals=intervals,
+                total_use_minutes=round(total_use / 60),
+            ),
         )
 
     @app.get("/events")
@@ -462,7 +508,13 @@ def create_app(
                     except asyncio.TimeoutError:
                         yield {"event": "ping", "data": ""}
                         continue
-                    html = templates.env.get_template("_panel.html").render(s=state)
+                    # SSE renders happen *after* the lang middleware has run on
+                    # the original request, so the lang is on request.state.
+                    # Build the same closure-based context the regular routes
+                    # use (env.globals don't carry `t`).
+                    html = templates.env.get_template("_panel.html").render(
+                        **_ctx(request, s=state)
+                    )
                     yield {"event": "update", "data": html}
             finally:
                 supervisor.unsubscribe(q)

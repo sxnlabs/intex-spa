@@ -2,7 +2,16 @@
    as day-chip + time + temp rows, and POSTs the assembled config back. */
 (function () {
   "use strict";
-  var DAYS = ["L", "M", "M", "J", "V", "S", "D"];
+
+  // i18n bridge — window.I18N is injected by index.html for the active lang.
+  var T = function (k, p) {
+    var s = (window.I18N && window.I18N[k]) || k;
+    if (p) { for (var x in p) s = s.split('{' + x + '}').join(p[x]); }
+    return s;
+  };
+  // "MTWTFSS" / "LMMJVSD" — one char per weekday, indexed 0=Mon … 6=Sun
+  var DAYS = T('sched.days').split('');
+
   var CONTAINER = { heat: "rules-heat", filter: "rules-filter", ready: "rules-ready" };
   var DEFAULTS = {
     heat: { days: [0, 1, 2, 3, 4, 5, 6], time: "18:00", temp: 36 },
@@ -30,8 +39,9 @@
       fields = '<input type="time" class="t" value="' + r.time + '">' +
         '<span class="num"><input type="number" class="temp" min="20" max="40" value="' + r.temp + '">°</span>';
     }
+    // structured strings, no untrusted input — values are number/HH:MM only
     el.innerHTML = chips(r.days) +
-      '<div class="rfields">' + fields + '<button type="button" class="del" aria-label="Supprimer">✕</button></div>';
+      '<div class="rfields">' + fields + '<button type="button" class="del" aria-label="' + T('sched.delete_aria') + '">✕</button></div>';
     return el;
   }
 
@@ -65,7 +75,7 @@
     $("#sched-enabled").checked = !!cfg.enabled;
     $("#eco-temp").value = cfg.eco_temp;
     ["heat", "filter", "ready"].forEach(function (k) {
-      document.getElementById(CONTAINER[k]).innerHTML = "";
+      var c = document.getElementById(CONTAINER[k]); c.textContent = "";
     });
     (cfg.heat_rules || []).forEach(function (r) { addRow("heat", r); });
     (cfg.filter_windows || []).forEach(function (r) { addRow("filter", r); });
@@ -74,13 +84,17 @@
 
   function renderPlan(p) {
     var el = $("#sched-plan");
-    if (!p || !p.enabled) { el.innerHTML = ""; return; }
+    el.textContent = "";
+    if (!p || !p.enabled) return;
     var bits = [];
-    if (p.setpoint != null) bits.push("🎯 " + p.setpoint + "°");
-    bits.push(p.heater ? "🔥 chauffe" : "⏸️ repos");
-    if (p.filter != null) bits.push(p.filter ? "🌀 filtre on" : "filtre off");
-    if (p.heat_rate != null) bits.push("↗ " + p.heat_rate + "°/h");
-    el.innerHTML = '<div class="plan-now">' + bits.join(" · ") + "</div>";
+    if (p.setpoint != null) bits.push(T('sched.plan_target', {temp: p.setpoint}));
+    bits.push(p.heater ? T('sched.plan_heating') : T('sched.plan_resting'));
+    if (p.filter != null) bits.push(p.filter ? T('sched.plan_filter_on') : T('sched.plan_filter_off'));
+    if (p.heat_rate != null) bits.push(T('sched.plan_rate', {rate: p.heat_rate}));
+    var div = document.createElement('div');
+    div.className = 'plan-now';
+    div.textContent = bits.join(" · ");
+    el.appendChild(div);
   }
 
   document.addEventListener("click", function (e) {
@@ -101,16 +115,21 @@
       body: JSON.stringify(collect()),
     });
     var j = await r.json().catch(function () { return {}; });
-    if (r.ok) { msg.textContent = "✓ Enregistré"; msg.className = "sched-msg ok"; renderPlan(j.plan); }
-    else { msg.textContent = "✗ " + (j.detail || ("Erreur " + r.status)); msg.className = "sched-msg err"; }
+    if (r.ok) { msg.textContent = T('sched.saved'); msg.className = "sched-msg ok"; renderPlan(j.plan); }
+    else {
+      msg.textContent = T('sched.error', {detail: j.detail || ('HTTP ' + r.status)});
+      msg.className = "sched-msg err";
+    }
   });
 
   // -- weather + algorithm explainer ----------------------------------------
   function fmtAge(s) {
     if (s == null) return "";
-    if (s < 90) return "à l'instant";
+    if (s < 90) return T('weather.age_just_now');
     var m = Math.round(s / 60);
-    return m < 60 ? "il y a " + m + " min" : "il y a " + Math.round(m / 60) + " h";
+    return m < 60
+      ? T('weather.age_minutes', {value: m})
+      : T('weather.age_hours', {value: Math.round(m / 60)});
   }
 
   function renderWeather(w) {
@@ -119,32 +138,33 @@
     card.hidden = false;
     var now = [];
     if (w.air != null) now.push("🌡️ " + w.air + "°");
-    if (w.feels != null) now.push("ressenti " + w.feels + "°");
-    if (w.wind != null) now.push("💨 " + Math.round(w.wind) + " km/h");
-    if (w.low_12h != null) now.push("min 12 h " + w.low_12h + "°");
+    if (w.feels != null) now.push(T('weather.feels', {value: w.feels}));
+    if (w.wind != null) now.push("💨 " + T('weather.wind', {value: Math.round(w.wind)}));
+    if (w.low_12h != null) now.push(T('weather.low_12h', {value: w.low_12h}));
     $("#wx-now").textContent = now.join(" · ") || "—";
     $("#wx-age").textContent = fmtAge(w.age_s);
 
     var ex = w.rate_explain, rate = $("#wx-rate");
     if (ex) {
       if (ex.source === "calibrated") {
-        rate.innerHTML = "↗ Chauffe estimée <b>" + ex.effective + "°/h</b> — calibrée sur l'historique " +
-          "(perte " + ex.k_loss + "°/h par °C d'écart eau/air ; eau " + ex.water + "°, ext " + ex.air + "°)";
+        rate.textContent = T('weather.rate_calibrated', {
+          effective: ex.effective, k_loss: ex.k_loss, water: ex.water, air: ex.air,
+        });
       } else if (ex.source === "weather-derate") {
-        rate.innerHTML = "↗ Chauffe <b>" + ex.effective + "°/h</b> — base " + ex.base +
-          "°/h × " + ex.factor + " (météo, ext " + ex.air + "°)";
+        rate.textContent = T('weather.rate_derate', {
+          effective: ex.effective, base: ex.base, factor: ex.factor, air: ex.air,
+        });
       } else {
-        rate.innerHTML = "↗ Chauffe <b>" + ex.effective + "°/h</b> — mesurée";
+        rate.textContent = T('weather.rate_measured', {effective: ex.effective});
       }
     } else { rate.textContent = "—"; }
 
     var ph = w.preheat, pe = $("#wx-preheat");
     if (ph) {
-      pe.innerHTML = (ph.active ? "🟢 " : "⚪ ") + "Pré-chauffe " + ph.temp + "° pour " + ph.time +
-        " — départ ~" + ph.start + " (avance " + ph.lead_h + " h)";
+      var key = ph.active ? 'weather.preheat_active' : 'weather.preheat_inactive';
+      pe.textContent = T(key, {temp: ph.temp, time: ph.time, start: ph.start, lead_h: ph.lead_h});
     } else { pe.textContent = ""; }
-    $("#wx-note").textContent =
-      "Plus il fait froid/venté dehors, plus la montée est lente — l'algo avance l'heure de départ en conséquence.";
+    $("#wx-note").textContent = T('weather.note');
   }
 
   async function loadAll() {

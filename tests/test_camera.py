@@ -393,8 +393,11 @@ async def test_index_includes_camera_card_when_enabled(tmp_path):
         r = await c.get("/")
         assert "cam-card" in r.text
         assert "/static/camera.js" in r.text
-        # housse, not couvercle — UI convention
-        assert "Housse" in r.text
+        # default lang = EN ⇒ "Cover" label
+        assert "Cover" in r.text
+        # FR via Accept-Language ⇒ "Housse"
+        r_fr = await c.get("/", headers={"Accept-Language": "fr-FR,fr;q=0.9"})
+        assert "Housse" in r_fr.text
 
 
 # -- cover state: forced override -------------------------------------------

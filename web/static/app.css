@@ -58,6 +58,18 @@ main {
   .col-side > :first-child { margin-top: 0; }
 }
 
+.lang-switcher {
+  position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px;
+  margin: 0; display: inline-flex; gap: 4px; font-size: 0.7rem;
+}
+.lang-switcher a {
+  color: var(--muted); text-decoration: none; padding: 3px 8px;
+  border-radius: 999px; font-weight: 600; letter-spacing: 0.05em;
+}
+.lang-switcher a.active { background: var(--card-hi); color: var(--fg); }
+
+header { position: relative; }
+
 header h1 {
   font-size: 1.1rem;
   font-weight: 600;

@@ -8,6 +8,16 @@
 (function () {
   'use strict';
 
+  // i18n: window.I18N is injected by index.html for the current lang.
+  // Plain string templates with {placeholders} so French translations stay
+  // grammatical (FR adjectives go after the noun, English before — only
+  // sentence-level translation handles that).
+  var T = function (k, p) {
+    var s = (window.I18N && window.I18N[k]) || k;
+    if (p) { for (var x in p) s = s.split('{' + x + '}').join(p[x]); }
+    return s;
+  };
+
   // -- DOM --
   var card    = document.getElementById('cam-card');
   if (!card) return;             // server didn't render the card; subsystem is off
@@ -73,27 +83,35 @@
     var c = snap && snap.cover;
     coverEl.classList.remove('cover-on', 'cover-off', 'cover-unknown');
     var forced = !!(c && c.forced);
-    if (!c || !c.state) { coverEl.textContent = 'Housse —'; coverEl.classList.add('cover-unknown'); return; }
-    var prefix = forced ? '✋ ' : '';                 // ✋ marker when forced
-    var suffix = forced ? '' : ' · ' + Math.round((c.confidence || 0) * 100) + '%';
+    if (!c || !c.state) {
+      coverEl.textContent = T('cam.cover_label');
+      coverEl.classList.add('cover-unknown'); return;
+    }
+    var pct = Math.round((c.confidence || 0) * 100);
     if (c.state === 'on') {
-      coverEl.textContent = prefix + 'Housse en place' + suffix;
+      coverEl.textContent = forced ? T('cam.cover_forced_on') : T('cam.cover_on', {pct: pct});
       coverEl.classList.add('cover-on');
     } else if (c.state === 'off') {
-      coverEl.textContent = prefix + 'Housse retirée' + suffix;
+      coverEl.textContent = forced ? T('cam.cover_forced_off') : T('cam.cover_off', {pct: pct});
       coverEl.classList.add('cover-off');
     } else {
-      coverEl.textContent = 'Housse — détection incertaine';
+      coverEl.textContent = T('cam.cover_unknown');
       coverEl.classList.add('cover-unknown');
     }
     // calibration helper: show baseline status
     if (snap && snap.baselines && coverHelp) {
       var b = snap.baselines;
-      var have_on  = !!(b.on  && typeof b.on.luma  === 'number');
-      var have_off = !!(b.off && typeof b.off.luma === 'number');
       var pieces = [];
-      pieces.push(have_on  ? ('en place ✓ luma '  + Math.round(b.on.luma)  + ' std ' + Math.round(b.on.std))  : 'en place —');
-      pieces.push(have_off ? ('retirée ✓ luma ' + Math.round(b.off.luma) + ' std ' + Math.round(b.off.std)) : 'retirée —');
+      pieces.push(
+        (b.on && typeof b.on.luma === 'number')
+          ? T('cam.learn_baseline_on',  {luma: Math.round(b.on.luma),  std: Math.round(b.on.std)})
+          : T('cam.learn_baseline_missing_on')
+      );
+      pieces.push(
+        (b.off && typeof b.off.luma === 'number')
+          ? T('cam.learn_baseline_off', {luma: Math.round(b.off.luma), std: Math.round(b.off.std)})
+          : T('cam.learn_baseline_missing_off')
+      );
       coverHelp.textContent = pieces.join(' · ');
     }
     // segmented selector: highlight current force-state

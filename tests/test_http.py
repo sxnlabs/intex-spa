@@ -43,9 +43,10 @@ async def test_index_renders_state():
 async def test_panel_partial():
     spa = FakeSpa()
     async with app_for(spa) as client:
+        # default lang is EN — the english toggle labels are translated via i18n
         r = await client.get("/panel")
         assert r.status_code == 200
-        assert "Bulles" in r.text and "Chauffage" in r.text
+        assert "Bubbles" in r.text and "Heat" in r.text
         assert "🫧" in r.text  # toggle emoji rendered from ui_toggles
 
 
@@ -96,7 +97,7 @@ async def test_index_includes_scheduler_ui():
     async with app_for(spa) as client:
         r = await client.get("/")
         assert r.status_code == 200
-        assert "Programmation" in r.text          # scheduler card on the main page
+        assert "Schedule" in r.text                # scheduler card on the main page (EN default)
         assert "/static/schedule.js" in r.text
 
 
