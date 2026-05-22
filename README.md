@@ -48,7 +48,7 @@ spa/
 │   ├── history.py      # throttled temperature history (JSONL, self-healing)
 │   ├── schedule.py     # config + pure decision engine (heat / filter / ready-by)
 │   ├── scheduler.py    # async reconciler: applies the desired state, manual overrides
-│   ├── camera.py       # UniFi Protect bridge: ffmpeg snapshot loop + usage store + timelapse
+│   ├── camera.py       # RTSP/RTSPS camera bridge: ffmpeg snapshot loop + usage store + timelapse
 │   ├── cover_detect.py # experimental ROI luma/std-dev cover ON/OFF heuristic (optional deps)
 │   └── protect_client.py # uiprotect person-event poller → UsageStore (optional dep)
 ├── web/
@@ -110,8 +110,11 @@ TCP socket to `<spa-ip>:8990` can control it directly, bypassing this app
 entirely. The single-client quirk (only one TCP client at a time) is a race, not a
 control. The real protection is **network-level**:
 
-- On the UDM Pro, keep the spa on the IoT VLAN and add a firewall rule so **only the
-  Mac's IP** can reach `<spa-ip>:8990`; drop everything else.
+- Add a firewall / ACL rule on your router so **only the Mac's IP** can reach
+  `<spa-ip>:8990`; drop everything else. Most routers expose this under
+  "Traffic Rules", "Access Control", "Inter-VLAN rules", or similar — the
+  spa being on its own IoT VLAN makes this even easier. See
+  [`SETUP.md` § 2.5](SETUP.md) for the concrete pattern.
 - **Block the spa's WAN egress** (stops phone-home and a possible Tuya firmware push).
 
 The app's **optional password** (`HERMES_PASSWORD`, or `state/.password`) is
@@ -157,8 +160,9 @@ installer warns if you bind `0.0.0.0` without a password.
   spa's supply would close that gap (and give kWh telemetry).
 - **macOS sleep** suspends the LaunchAgent. Enable *Settings → Energy → Wake for
   network access* (and keep the Mac on power) to stay reachable from the phone.
-- **Inter-VLAN.** The spa is on the IoT VLAN; the Mac/phone must be allowed to reach
-  `<spa-ip>:8990` (UDM firewall rule) or sit on the same VLAN.
+- **Inter-VLAN.** If the spa is on a separate VLAN/SSID from the Mac, your
+  router must allow LAN-side traffic to `<spa-ip>:8990`. Either sit them on
+  the same network, or add the firewall exception in your router admin UI.
 - **Assets are vendored** under `static/vendor/` (htmx, the SSE extension, Chart.js) —
   no CDN, works fully offline. Re-vendor with `npm i` + copy if you bump versions.
 - Temperature setpoint is bounded to 20–40 °C (`protocol.TEMP_MIN_C/MAX_C`).
@@ -222,11 +226,19 @@ shows current conditions and spells out the algorithm's decision so it's auditab
 
 Config (env, defaults shown): `WEATHER_ENABLED=1`, `WEATHER_LAT=48.45`, `WEATHER_LON=-4.42`.
 
-## Camera (UniFi Protect)
+## Camera
 
-The camera partially shows the spa. The subsystem wires four features into a single
-fail-soft module (`intex_spa/camera.py`) that mirrors `weather.py` — same lifecycle,
-same stale-but-useful pattern, same "no config ⇒ off" master switch.
+The camera partially shows the spa. The subsystem wires four features into a
+single fail-soft module (`intex_spa/camera.py`) that mirrors `weather.py` —
+same lifecycle, same stale-but-useful pattern, same "no config ⇒ off" master
+switch.
+
+> **Vendor-agnostic for features 1, 3, 4** (snapshot, housse detection,
+> timelapse): any camera that speaks RTSP / RTSPS works — `ffmpeg` reads the
+> URL, it doesn't care who made the camera. Only **feature 2** (person-event
+> activity overlay on the chart) needs **UniFi Protect** specifically, via
+> the `uiprotect` Python lib. The examples below show UniFi paths because
+> that's the author's setup; substitute your camera's RTSP URL accordingly.
 
 **Master switch.** Everything is gated by `state/camera.json`. Missing file or empty
 `rtsps_url` ⇒ no background tasks, every endpoint returns `{"enabled": false}`, the

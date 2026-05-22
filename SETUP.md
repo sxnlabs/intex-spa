@@ -22,9 +22,11 @@ calibration / passwords, jump to **§ 10 — Restore state from backup** first.
 
 ## 2. Network setup — stable IPs + firewall
 
-The app addresses the spa and (optionally) the UniFi camera/UDM by IP. Those
-IPs must not drift on DHCP renewals, or your config breaks every couple of
-weeks. Do this **once per device**, then forget it.
+The app addresses the spa (and optionally a network camera) by IP. Those IPs
+must not drift on DHCP renewals, or your config breaks every couple of weeks.
+Do this **once per device**, then forget it. The steps below are
+router-agnostic; UniFi, pfSense, OPNsense, OpenWrt, AsusWRT and most consumer
+routers all expose the same primitives, just under different menu names.
 
 ### 2.1 — Pair the spa to your wifi
 
@@ -37,79 +39,84 @@ it's never spoken to again.
 
 Either:
 
-- **UniFi controller**: Settings → **Insights** → **Known Clients** → look for
-  an Intex/Tuya-prefixed MAC. Note the assigned IP.
-- **Generic** (any router, any LAN): from the Mac, scan for hosts that answer
-  on the spa's control port. Skip everything that doesn't.
+- **From the router admin UI**: open the connected-clients / DHCP-leases page
+  and look for a freshly-joined device with an `Intex`/`Tuya`/`Hangzhou
+  IoTBlue` MAC OUI. Note its current IP.
+- **From the Mac, by port-scan**: hit every host on your subnet on the spa's
+  control port — only the spa answers.
   ```bash
   # adjust the subnet to your LAN
-  for ip in 192.168.20.{1..254}; do
+  for ip in 192.168.1.{1..254}; do
     nc -zw1 "$ip" 8990 2>/dev/null && echo "spa: $ip"
   done
   ```
-  Or `nmap -p 8990 --open 192.168.20.0/24` if you have nmap installed.
+  Or `nmap -p 8990 --open 192.168.1.0/24` if you have nmap.
 
 ### 2.3 — Reserve a static DHCP lease for the spa
 
-The lease tells the router "always hand this MAC the same IP". The spa itself
+The reservation tells the router "always hand this MAC the same IP". The spa
 stays on DHCP — no need to change anything on the spa side.
 
-**UDM Pro / UniFi Network**:
-1. Settings → **Clients** → click the spa.
-2. Settings ⚙ → **Fixed IP Address** → toggle on, accept the current IP (or
-   pick a new one inside your DHCP range).
-3. Unplug + replug the spa's power brick so it picks up the lease on its next
-   DHCP request.
+Every halfway-modern router has this under a name like **DHCP reservation**,
+**Static lease**, **Fixed IP**, **Address reservation**, or
+**Manual assignment**. Pick the spa from the clients list (or paste its MAC)
+and pin the IP it already has (or pick a free one inside the DHCP range).
+Reboot the spa (unplug + replug) so it picks up the lease on its next request.
 
-**Generic router**: most have a "DHCP reservation" or "Static lease" table
-under LAN settings. Add the spa's MAC → the IP you want.
+> If you're on UniFi: Settings → **Clients** → spa → **Fixed IP Address**.
+> If you're on OPNsense/pfSense: Services → DHCPv4 → Leases → "Add static
+> mapping for this MAC". Other routers: search your admin UI for one of the
+> labels above.
 
-The IP you reserve here is the value you'll paste into `INTEX_SPA_HOST=` in
-**§ 7 — Install the LaunchAgent**.
+The IP you reserve here is the value you'll paste into `INTEX_SPA_HOST=` at
+**§ 7 — Install the LaunchAgent**. Also reserve the Mac's IP the same way —
+the firewall rule in 2.5 needs the Mac's IP to stay constant.
 
-### 2.4 — Same treatment for the camera + UDM (if you'll use the camera)
+### 2.4 — Same treatment for the camera (if you'll use the camera features)
 
-If you plan to enable feature 2 / 3 / 4 (snapshot, housse detection,
-timelapse — see **§ 9**), repeat **2.2 + 2.3** for the camera and for the
-UniFi Protect controller (the UDM itself, or a UNVR). The Protect host IP
-goes into `state/camera.json` → `protect.host`; the camera IP shows up
-inside the RTSPS URL you'll grab from the Protect UI.
+If you plan to enable features 2-4 (snapshot, housse detection, timelapse —
+see **§ 9**), repeat **2.2 + 2.3** for the IP camera, plus for any controller
+in front of it (e.g. an NVR or a router with a built-in camera dashboard).
 
-### 2.5 — (Optional) Firewall: only your Mac reaches the spa
+The camera doesn't have to be UniFi — any camera that speaks RTSP / RTSPS
+works (`ffmpeg` is what reads it). Only **feature 2** (person-event activity
+overlay) needs UniFi Protect specifically, because it uses the `uiprotect`
+Python lib — see § 9.
+
+### 2.5 — (Optional but recommended) Firewall: Mac-only access to the spa
 
 The spa firmware has **no authentication and no encryption**. Anyone on the
 same LAN can `nc <spa-ip> 8990` and control it directly, bypassing this app.
-Defense-in-depth: a UniFi traffic rule that drops everything to that host:port
-except your Mac.
+Defense-in-depth: a firewall/ACL rule that drops every LAN client → spa:8990
+except the Mac.
 
-UniFi Network → Settings → **Security** → **Traffic Rules** → *New rule*:
+Look in your router under a name like **Firewall rules**, **Traffic rules**,
+**Access control**, **LAN ACL** or **Inter-VLAN rules** (the spa being on an
+IoT VLAN makes this trivial — block all, allow Mac IP). The rule, in words:
 
-| Field | Value |
-|---|---|
-| Type | LAN In |
-| Action | Block |
-| Source | Any |
-| Destination | IP `<spa-ip>`, port `8990` |
-| Add exception | Source = Mac's IP (reserve it too — § 2.3 style) |
+```
+type:         LAN-side traffic
+action:       block
+source:       any host
+destination:  <spa-ip> port 8990
+exception:    source = <mac-ip>   (allow this one through)
+```
 
 Verify from your phone (or another LAN device that's not the Mac):
 `nc -zw1 <spa-ip> 8990` should fail.
 
 ### 2.6 — (Optional) Block the spa's WAN egress
 
-The spa's wifi module phones home and can accept firmware updates from Tuya.
-A "Block all outbound" rule scoped to the spa's IP shuts both off without
-affecting your LAN control:
-
-UniFi Network → Settings → **Security** → **Traffic Rules** → *New rule*:
-type **Internet**, action **Block**, source IP = `<spa-ip>`.
+The spa's wifi module phones home and accepts firmware updates from Tuya
+servers. A "block outbound to internet" rule scoped to `<spa-ip>` shuts both
+off without affecting your LAN control. Same place in the router UI as 2.5.
 
 ### 2.7 — Sanity check from the Mac
 
 ```bash
 ping -c 3 <spa-ip>                 # ICMP — basic L3 reachability
 nc -zv <spa-ip> 8990               # spa control port (silent success = ok)
-nc -zv <udm-ip> 7441 2>/dev/null   # UniFi Protect RTSPS, only if using camera
+nc -zv <camera-ip> 7441 2>/dev/null # camera RTSP/RTSPS, only if using camera
 ```
 
 If any of these fails, fix the network before going further. Every later step
@@ -184,12 +191,17 @@ have to recreate it locally.
 ⇒ the whole subsystem is off (every endpoint returns `{"enabled": false}`, UI
 hides the camera card). Full populated shape:
 
+The URL format depends on your camera vendor — UniFi Protect uses
+`rtsps://<host>:7441/<token>?enableSrtp`, generic IP cameras typically use
+`rtsp://user:pass@<host>:554/<path>`. Either works as long as `ffmpeg` can
+open it (verified in the next step). Filled-out shape:
+
 ```jsonc
 {
-  "rtsps_url": "rtsps://<UDM_IP>:7441/<TOKEN>?enableSrtp",
+  "rtsps_url": "rtsps://<camera-host>:7441/<TOKEN>?enableSrtp",
   "poll_seconds": 10,
   "protect": {
-    "host": "<UDM_IP>",
+    "host": "<protect-host>",
     "user": "",
     "pass": ""
   },
@@ -211,13 +223,18 @@ hides the camera card). Full populated shape:
 }
 ```
 
-Where the token comes from:
+Where the URL comes from — vendor-specific:
 
-1. UniFi OS → **Protect** → tap the camera → **Settings** → **Advanced** →
-   **RTSPS streams** → enable a stream → copy the URL. It contains a per-stream
-   token; treat it like a credential.
-2. Paste into `rtsps_url`. **Never** paste this URL into a committed file, the
-   README, a chat log you might share, or a screenshot.
+- **UniFi Protect**: UniFi OS → **Protect** → tap the camera → **Settings** →
+  **Advanced** → **RTSPS streams** → enable a stream → copy the URL. It
+  contains a per-stream token; treat it like a credential.
+- **Generic IP camera** (Reolink, Amcrest, Hikvision, generic ONVIF, …): the
+  vendor's manual lists the RTSP path. ONVIF Device Manager or `onvif-cli`
+  can also discover it.
+
+Paste the URL into `rtsps_url`. **Never** paste a URL that contains a token
+or password into a committed file, the README, a chat log you might share,
+or a screenshot.
 
 Quick frame-grab test once the URL is in place (this is "Step 0" — confirms
 your network can reach the camera before we wire the service):
