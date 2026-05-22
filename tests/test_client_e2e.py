@@ -1,0 +1,109 @@
+"""End-to-end client tests against the fake spa (no real hardware)."""
+
+import pytest
+
+from fake_spa import FakeSpa
+from intex_spa.client import IntexSpaClient, SpaUnreachable
+
+
+async def _client_for(spa: FakeSpa) -> IntexSpaClient:
+    host, port = await spa.start()
+    return IntexSpaClient(host, port=port, timeout=2.0, retries=1)
+
+
+async def test_status_roundtrip():
+    spa = FakeSpa()
+    c = await _client_for(spa)
+    try:
+        st = await c.status()
+        assert st["power"] is True
+        assert st["current_temp"] == 19
+        assert st["preset_temp"] == 37
+        assert spa.intents == ["status"]
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_set_toggles_when_state_differs():
+    spa = FakeSpa()  # bubbles starts False
+    c = await _client_for(spa)
+    try:
+        st = await c.set("bubbles", True)
+        assert st["bubbles"] is True
+        assert spa.intents == ["status", "bubbles"]  # read, then one toggle
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_set_is_idempotent_no_spurious_toggle():
+    spa = FakeSpa()  # power already True
+    c = await _client_for(spa)
+    try:
+        st = await c.set("power", True)
+        assert st["power"] is True
+        # only a status read — a toggle here would have turned the spa OFF
+        assert spa.intents == ["status"]
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_set_preset_absolute_then_idempotent():
+    spa = FakeSpa()
+    c = await _client_for(spa)
+    try:
+        st = await c.set_preset(40)
+        assert st["preset_temp"] == 40
+        assert spa.intents == ["status", "preset_temp"]
+        st = await c.set_preset(40)  # already 40 -> no command
+        assert st["preset_temp"] == 40
+        assert spa.intents == ["status", "preset_temp", "status"]
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_set_preset_out_of_range_rejected():
+    spa = FakeSpa()
+    c = await _client_for(spa)
+    try:
+        with pytest.raises(ValueError):
+            await c.set_preset(50)
+        with pytest.raises(ValueError):
+            await c.set_preset(10)
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_set_rejects_non_toggle_field():
+    spa = FakeSpa()
+    c = await _client_for(spa)
+    try:
+        with pytest.raises(ValueError):
+            await c.set("preset_temp", True)
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_reconnects_after_broken_socket():
+    spa = FakeSpa()
+    c = await _client_for(spa)
+    try:
+        await c.status()
+        await c._disconnect()  # simulate a dropped/idle-killed connection
+        st = await c.status()  # must transparently reconnect
+        assert st["power"] is True
+    finally:
+        await c.close()
+        await spa.stop()
+
+
+async def test_unreachable_raises():
+    # nothing listening on port 1 -> connection refused, fast
+    c = IntexSpaClient("127.0.0.1", port=1, timeout=0.5, retries=1)
+    with pytest.raises(SpaUnreachable):
+        await c.status()

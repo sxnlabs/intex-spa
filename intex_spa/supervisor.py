@@ -1,0 +1,139 @@
+"""Supervisor: owns the single spa client, polls it, and fans out state via SSE.
+
+Why a supervisor at all: the firmware allows only one TCP client, so the whole app
+must funnel through exactly one IntexSpaClient. The supervisor holds it, runs a
+periodic poll (which doubles as the keepalive the firmware needs), keeps the last
+known status on error, and pushes every state change to SSE subscribers.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections.abc import Callable
+
+from .client import IntexSpaClient, SpaUnreachable
+from .history import TempHistory
+from .protocol import PORT
+
+_LOG = logging.getLogger("intex_spa.supervisor")
+
+
+class Supervisor:
+    def __init__(
+        self,
+        host: str,
+        port: int = PORT,
+        poll_interval: float = 10.0,
+        history: TempHistory | None = None,
+        air_provider: Callable[[], float | None] | None = None,
+    ) -> None:
+        self.client = IntexSpaClient(host, port=port)
+        self.poll_interval = poll_interval
+        self.history = history if history is not None else TempHistory(path=None)
+        # returns the current outside air temp (cached, non-blocking) or None
+        self.air_provider = air_provider
+        self.state: dict = {
+            "status": None,      # last decoded status dict, or None until first read
+            "online": False,
+            "error": None,
+            "updated_at": None,  # epoch seconds
+        }
+        self._subs: set[asyncio.Queue] = set()
+        self._poll_task: asyncio.Task | None = None
+
+    # -- lifecycle ------------------------------------------------------------
+    async def start(self) -> None:
+        if self._poll_task is None:
+            self._poll_task = asyncio.create_task(self._poll_loop())
+
+    async def stop(self) -> None:
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            self._poll_task = None
+        await self.client.close()
+
+    # -- SSE subscriptions ----------------------------------------------------
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=8)
+        self._subs.add(q)
+        q.put_nowait(self.state)  # push current snapshot immediately
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        self._subs.discard(q)
+
+    def _publish(self) -> None:
+        for q in list(self._subs):
+            try:
+                q.put_nowait(self.state)
+            except asyncio.QueueFull:  # slow consumer: drop oldest, keep newest
+                try:
+                    q.get_nowait()
+                    q.put_nowait(self.state)
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
+
+    def _set_state(self, *, online: bool, error: str | None, status: dict | None = None) -> None:
+        # keep the last known status on error so the UI can show a stale-but-useful view
+        kept = status if status is not None else self.state.get("status")
+        self.state = {
+            "status": kept,
+            "online": online,
+            "error": error,
+            "updated_at": time.time(),
+        }
+        if online and kept and kept.get("current_temp") is not None:
+            try:
+                air = None
+                if self.air_provider is not None:
+                    try:
+                        air = self.air_provider()
+                    except Exception:  # noqa: BLE001 — weather is best-effort
+                        air = None
+                self.history.record(
+                    kept["current_temp"], kept.get("preset_temp"), kept.get("heater"), air=air
+                )
+            except Exception:  # noqa: BLE001 — history is best-effort, never break a refresh
+                _LOG.exception("history record failed (non-fatal)")
+        self._publish()
+
+    # -- operations -----------------------------------------------------------
+    async def refresh(self) -> dict:
+        try:
+            st = await self.client.status()
+            self._set_state(status=st, online=True, error=None)
+        except SpaUnreachable as e:
+            self._set_state(online=False, error=str(e))
+        except Exception as e:  # noqa: BLE001 — never let the poll loop die
+            _LOG.exception("unexpected error refreshing spa status")
+            self._set_state(online=False, error=str(e))
+        return self.state
+
+    async def set_field(self, field: str, desired: bool) -> dict:
+        try:
+            st = await self.client.set(field, desired)
+        except SpaUnreachable as e:
+            self._set_state(online=False, error=str(e))
+            raise
+        self._set_state(status=st, online=True, error=None)
+        return self.state
+
+    async def set_preset(self, temp: int) -> dict:
+        try:
+            st = await self.client.set_preset(temp)
+        except SpaUnreachable as e:
+            self._set_state(online=False, error=str(e))
+            raise
+        self._set_state(status=st, online=True, error=None)
+        return self.state
+
+    async def _poll_loop(self) -> None:
+        while True:
+            await self.refresh()
+            await asyncio.sleep(self.poll_interval)

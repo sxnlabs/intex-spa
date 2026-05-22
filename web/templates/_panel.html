@@ -1,0 +1,41 @@
+{% set st = s.status %}
+{% if not s.online %}
+<div class="banner" role="status">
+  Spa hors-ligne{% if s.error %} — {{ s.error }}{% endif %}{% if st %} · dernier état connu{% endif %}
+</div>
+{% endif %}
+
+{% if st %}
+<section class="readout">
+  <div class="temp">
+    <span class="cur">{% if st.current_temp is none %}—{% else %}{{ st.current_temp }}{% endif %}<small>°{{ st.unit }}</small></span>
+    {% if st.error_code %}
+      <span class="errcode">⚠️ {{ st.error_code }}</span>
+    {% elif st.current_temp is not none %}
+      <span class="mood">{% if st.current_temp < 24 %}🥶{% elif st.current_temp < 32 %}😎{% else %}♨️{% endif %}</span>
+    {% endif %}
+  </div>
+
+  <div class="setpoint">
+    <button class="step" hx-post="/preset/{{ st.preset_temp - 1 }}" hx-target="#panel" hx-swap="innerHTML"
+            {% if st.preset_temp <= 20 %}disabled{% endif %} aria-label="Baisser la consigne">−</button>
+    <span class="val">{{ st.preset_temp }}<small>°{{ st.unit }}</small><em>consigne</em></span>
+    <button class="step" hx-post="/preset/{{ st.preset_temp + 1 }}" hx-target="#panel" hx-swap="innerHTML"
+            {% if st.preset_temp >= 40 %}disabled{% endif %} aria-label="Monter la consigne">+</button>
+  </div>
+
+  <div class="toggles">
+    {% for field, label, emoji in ui_toggles %}
+    <button class="toggle {% if st[field] %}on{% endif %}"
+            hx-post="/toggle/{{ field }}" hx-target="#panel" hx-swap="innerHTML">
+      <span class="lbl"><span class="ico">{{ emoji }}</span> {{ label }}</span>
+      <span class="state">{{ 'ON' if st[field] else 'OFF' }}</span>
+    </button>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<section class="readout"><p class="waiting">En attente de données du spa…</p></section>
+{% endif %}
+
+<p class="updated">{% if s.updated_at %}Mis à jour {{ s.updated_at | ts }}{% endif %}</p>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sxnlabs.spa</string>
+
+  <!-- Exec the venv's Python directly — NOT `uv run` (uv re-validates the venv on each
+       launch and can rebuild it; under KeepAlive that becomes a recreate loop and the
+       server never stays up). The venv is built once by install.sh and pinned to a
+       specific CPython via .python-version (3.12 — see README for why not 3.14). -->
+  <!-- Do NOT pass `--workers` (not even `--workers 1`): that switches uvicorn to a
+       multiprocess manager that spawns a child worker, which wedges under launchd
+       (parent stuck in xpcproxy, never binds). The default is a single in-process
+       server — exactly what we want: one supervisor, one TCP client to the spa. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__WORKDIR__/.venv/bin/python</string>
+    <string>-m</string>
+    <string>uvicorn</string>
+    <string>web.main:make_app</string>
+    <string>--factory</string>
+    <string>--host</string>
+    <string>__BIND__</string>
+    <string>--port</string>
+    <string>__PORT__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKDIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- HOME is required by some libs (e.g. httpx/anyio look at $HOME for trust stores
+         and tempdir defaults). launchd does NOT set it for LaunchAgents by default. -->
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>INTEX_SPA_HOST</key>
+    <string>__SPA_HOST__</string>
+    <key>INTEX_SPA_PORT</key>
+    <string>__SPA_PORT__</string>
+    <key>INTEX_SPA_POLL</key>
+    <string>__POLL__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Adaptive (default for LaunchAgents) — NOT Background. Background lowers the
+       jetsam priority so the OS kills this first under memory pressure, which we
+       suspected was responsible for the silent ~30s deaths. -->
+  <key>ProcessType</key>
+  <string>Adaptive</string>
+
+  <!-- Cap respawn rate. Without this, a fast-failing process pegs the CPU and confuses
+       launchd's bookkeeping (the "inefficient / checked allocations" state we hit when
+       uvicorn kept bind-failing under a port conflict). -->
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <!-- Give the lifespan shutdown time to close the TCP socket cleanly (default is 5s,
+       too tight for the supervisor's poll loop teardown + client.close()). -->
+  <key>ExitTimeOut</key>
+  <integer>20</integer>
+
+  <key>StandardOutPath</key>
+  <string>__WORKDIR__/state/spa.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__WORKDIR__/state/spa.err.log</string>
+</dict>
+</plist>

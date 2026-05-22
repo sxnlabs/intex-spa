@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#cdeef8">
+  <meta name="theme-color" content="#06293c" media="(prefers-color-scheme: dark)">
+  <title>Spa — connexion</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🫧</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main class="login">
+    <form class="login-card" method="post" action="/login">
+      <h1>🫧 Spa</h1>
+      {% if error %}<p class="login-err">Mot de passe incorrect</p>{% endif %}
+      <input type="password" name="password" placeholder="Mot de passe" autofocus
+             autocomplete="current-password" inputmode="text">
+      <button type="submit">Entrer</button>
+    </form>
+  </main>
+</body>
+</html>

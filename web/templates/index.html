@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#cdeef8">
+  <meta name="theme-color" content="#06293c" media="(prefers-color-scheme: dark)">
+  <title>Jacuzzzzz</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🫧</text></svg>">
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🫧</text></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js"></script>
+  <script src="/static/vendor/htmx-ext-sse.js"></script>
+  <script src="/static/vendor/chart.umd.min.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>🫧 Jacuzzzzz</h1>
+      {% if spa_host %}<p class="spa-ip">{{ spa_host }}</p>{% endif %}
+    </header>
+
+    <div class="layout">
+      <div class="col-main">
+        <div hx-ext="sse" sse-connect="/events">
+          <div id="panel" sse-swap="update" hx-target="#panel" hx-swap="innerHTML">
+            {% include "_panel.html" %}
+          </div>
+        </div>
+
+        <section class="chart-card">
+      <div class="chart-head">
+        <span>🌡️ Température</span>
+        <span class="range">
+          <button type="button" class="range-btn" data-hours="24">24 h</button>
+          <button type="button" class="range-btn active" data-hours="168">7 j</button>
+        </span>
+      </div>
+      <div class="chart-wrap" id="chart-wrap"><canvas id="tempChart"></canvas></div>
+      <p class="chart-empty" id="chart-empty">Historique en cours de constitution…</p>
+        </section>
+      </div><!-- /col-main -->
+
+      <aside class="col-side">
+        <section class="weather-card" id="weather-card" hidden>
+          <div class="wx-top">
+            <span class="wx-title">🌤️ Météo · Guipavas</span>
+            <span class="wx-age" id="wx-age"></span>
+          </div>
+          <div class="wx-now" id="wx-now">—</div>
+          <div class="wx-algo">
+            <div class="wx-algo-head">🧮 Décision de l'algorithme</div>
+            <div class="wx-line" id="wx-rate">—</div>
+            <div class="wx-line" id="wx-preheat"></div>
+            <p class="wx-note" id="wx-note"></p>
+          </div>
+        </section>
+
+        <section class="sched-card">
+      <div class="sched-top">
+        <span class="sched-title">⏱️ Programmation</span>
+        <label class="switch"><input type="checkbox" id="sched-enabled"><span class="track"></span></label>
+      </div>
+      <div id="sched-plan" class="sched-plan"></div>
+
+      <label class="eco">Température éco
+        <span class="num"><input type="number" id="eco-temp" min="20" max="40" step="1" value="30">°</span>
+      </label>
+
+      <div class="rgroup">
+        <div class="rgroup-head"><span>🔥 Chauffe</span><button type="button" class="add" data-add="heat">+ Ajouter</button></div>
+        <div class="rules" id="rules-heat"></div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-head"><span>🌀 Filtration</span><button type="button" class="add" data-add="filter">+ Ajouter</button></div>
+        <div class="rules" id="rules-filter"></div>
+      </div>
+      <div class="rgroup">
+        <div class="rgroup-head"><span>⏰ Prêt à l'heure</span><button type="button" class="add" data-add="ready">+ Ajouter</button></div>
+        <div class="rules" id="rules-ready"></div>
+      </div>
+
+      <button type="button" id="sched-save" class="save-btn">Enregistrer</button>
+      <p id="sched-msg" class="sched-msg"></p>
+        </section>
+      </aside>
+    </div><!-- /layout -->
+  </main>
+
+  <script>
+    (function () {
+      var chart = null;
+      var rangeHours = 168; // default: last 7 days
+      var css = getComputedStyle(document.documentElement);
+      var water = (css.getPropertyValue('--accent') || '#38bdf8').trim();
+      var muted = (css.getPropertyValue('--muted') || '#8a93ad').trim();
+      var airc = '#f59e0b'; // outside air (amber)
+
+      function pad(n) { return ('0' + n).slice(-2); }
+      function fmtTick(ms) {
+        var d = new Date(ms);
+        return rangeHours > 48 ? (pad(d.getDate()) + '/' + pad(d.getMonth() + 1))
+                               : (pad(d.getHours()) + ':' + pad(d.getMinutes()));
+      }
+      function fmtFull(ms) {
+        var d = new Date(ms);
+        return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + ' ' +
+               pad(d.getHours()) + ':' + pad(d.getMinutes());
+      }
+
+      async function load() {
+        var res;
+        try { res = await fetch('/history?hours=' + rangeHours); } catch (e) { return; }
+        if (!res.ok) return;
+        var j = await res.json();
+        var pts = j.points || [];
+        var empty = document.getElementById('chart-empty');
+        var wrap = document.getElementById('chart-wrap');
+        if (pts.length < 2) { empty.style.display = ''; wrap.style.display = 'none'; return; }
+        empty.style.display = 'none'; wrap.style.display = '';
+
+        var unit = '°' + (j.unit || 'C');
+        var water_data = pts.map(function (p) { return { x: p.t * 1000, y: p.cur }; });
+        var set_data = pts.map(function (p) { return { x: p.t * 1000, y: p.set }; });
+        var air_data = pts.map(function (p) { return { x: p.t * 1000, y: (p.air == null ? null : p.air) }; });
+        var has_air = pts.some(function (p) { return p.air != null; });
+
+        var datasets = [
+          { label: 'Eau', data: water_data, borderColor: water,
+            backgroundColor: water + '22', borderWidth: 2, tension: 0.3,
+            pointRadius: 0, fill: true },
+          { label: 'Consigne', data: set_data, borderColor: muted,
+            borderWidth: 1.5, borderDash: [5, 5], pointRadius: 0,
+            tension: 0, fill: false, stepped: true }
+        ];
+        if (has_air) datasets.push(
+          { label: 'Extérieur', data: air_data, borderColor: airc,
+            borderWidth: 1.5, tension: 0.3, pointRadius: 0, fill: false, spanGaps: true });
+        var data = { datasets: datasets };
+        var opts = {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { type: 'linear', grid: { display: false },
+                 ticks: { maxTicksLimit: 7, autoSkip: true, color: muted,
+                          callback: function (v) { return fmtTick(v); } } },
+            y: { grace: '15%', grid: { color: muted + '22' },
+                 ticks: { color: muted, maxTicksLimit: 6,
+                          callback: function (v) { return v + unit; } } }
+          },
+          plugins: {
+            legend: { labels: { color: muted, boxWidth: 12, usePointStyle: true } },
+            tooltip: { callbacks: { title: function (it) { return fmtFull(it[0].parsed.x); } } }
+          }
+        };
+        if (chart) { chart.data = data; chart.options = opts; chart.update('none'); }
+        else { chart = new Chart(document.getElementById('tempChart'), { type: 'line', data: data, options: opts }); }
+      }
+
+      function wireRange() {
+        var btns = document.querySelectorAll('.range-btn');
+        btns.forEach(function (b) {
+          b.addEventListener('click', function () {
+            rangeHours = parseInt(b.getAttribute('data-hours'), 10);
+            btns.forEach(function (x) { x.classList.toggle('active', x === b); });
+            load();
+          });
+        });
+      }
+
+      if (window.Chart) { wireRange(); load(); setInterval(load, 60000); }
+      else { document.getElementById('chart-empty').textContent = 'Graphique indisponible'; }
+    })();
+  </script>
+  <script src="/static/schedule.js"></script>
+</body>
+</html>
