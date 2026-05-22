@@ -30,6 +30,10 @@ spa/
 
 ## Run
 
+> **First time on this machine?** Read [`SETUP.md`](SETUP.md) — the end-to-end
+> bootstrap from a fresh Mac (brew + uv + ffmpeg, venv, `state/camera.json`,
+> LaunchAgent, ngrok tunnel, UniFi Protect creds, state restore from backup).
+
 Dev:
 
 ```bash
