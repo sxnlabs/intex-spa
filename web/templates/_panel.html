@@ -5,6 +5,18 @@
 </div>
 {% endif %}
 
+{% if st and st.error_code %}
+{# Specific help if we know this code, else the generic "see the manual" line. #}
+{% set help_key = 'error.' ~ st.error_code %}
+{% set help = t(help_key) %}
+{% if help == help_key %}{% set help = t('error.unknown', code=st.error_code) %}{% endif %}
+<div class="banner banner-error" role="alert">
+  <strong>⚠️ {{ t('error.title', code=st.error_code) }}</strong>
+  <span>{{ help }}</span>
+  <small>{{ t('error.heater_disabled') }}</small>
+</div>
+{% endif %}
+
 {% if st %}
 <section class="readout">
   <div class="temp">

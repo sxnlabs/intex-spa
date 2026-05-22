@@ -116,5 +116,16 @@
   "login.bad": "Wrong password",
   "login.placeholder": "Password",
   "login.submit": "Enter",
-  "login.page_title": "Spa — log in"
+  "login.page_title": "Spa — log in",
+
+  "error.title": "Error {code}",
+  "error.heater_disabled": "Heating stays off as long as this code is active.",
+  "error.unknown": "Spa firmware error — check the Intex manual for code {code}.",
+  "error.E81": "Press the GFCI reset button on the power cord (the box halfway down the cable). Also check the drain plug is fully screwed in and the water level is above the MIN line.",
+  "error.E90": "Water flow problem — top up to the MAX line, clean or replace the filter cartridge, make sure no intake is blocked.",
+  "error.E94": "Heater overheat — unplug for 30 min to let it cool, then check water level and filter.",
+  "error.E95": "Heater overheat (variant) — same as E94: cool down, refill, clean the filter.",
+  "error.E96": "Water-temperature sensor reading out of range — usually a sensor cable issue, contact Intex support if it persists.",
+  "error.E97": "Heater dry-fire protection — water level too low, refill above MIN.",
+  "error.E99": "Power-relay or controller fault — full GFCI reset, then unplug-replug; service if it persists."
 }

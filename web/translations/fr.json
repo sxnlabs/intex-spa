@@ -116,5 +116,16 @@
   "login.bad": "Mot de passe incorrect",
   "login.placeholder": "Mot de passe",
   "login.submit": "Entrer",
-  "login.page_title": "Spa — connexion"
+  "login.page_title": "Spa — connexion",
+
+  "error.title": "Erreur {code}",
+  "error.heater_disabled": "Le chauffage reste coupé tant que ce code est actif.",
+  "error.unknown": "Erreur firmware — voir le manuel Intex pour le code {code}.",
+  "error.E81": "Appuie sur le bouton de réarmement du disjoncteur différentiel (le boîtier sur le câble d'alimentation). Vérifie aussi que le bouchon de vidange est bien vissé et que le niveau d'eau dépasse le repère MIN.",
+  "error.E90": "Problème de débit d'eau — remets le niveau au repère MAX, nettoie ou remplace la cartouche de filtre, et vérifie qu'aucune aspiration n'est obstruée.",
+  "error.E94": "Surchauffe de la résistance — débranche 30 min pour laisser refroidir, puis vérifie niveau d'eau et filtre.",
+  "error.E95": "Surchauffe (variante) — comme E94 : laisse refroidir, remets de l'eau, nettoie le filtre.",
+  "error.E96": "Capteur de température hors plage — généralement un câble capteur défectueux, contacte le SAV Intex si ça persiste.",
+  "error.E97": "Protection anti-marche-à-sec de la résistance — niveau d'eau trop bas, remets de l'eau au-dessus du repère MIN.",
+  "error.E99": "Défaut relais ou contrôleur — réarmement complet du différentiel puis cycle débranche/rebranche ; SAV si ça persiste."
 }

@@ -89,12 +89,20 @@ header h1 {
 .banner {
   background: color-mix(in srgb, var(--warn) 18%, var(--card));
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  color: #ffe9bf;
+  color: var(--fg);
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 0.85rem;
   margin-bottom: 14px;
 }
+.banner-error {
+  /* hardware error from the spa itself — louder than the soft "offline" banner */
+  background: color-mix(in srgb, var(--err) 18%, var(--card));
+  border-color: color-mix(in srgb, var(--err) 55%, transparent);
+  display: grid; gap: 4px;
+}
+.banner-error strong { font-size: 0.95rem; }
+.banner-error small { font-size: 0.75rem; opacity: 0.75; }
 
 .readout {
   background: var(--card);
