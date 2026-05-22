@@ -1,0 +1,238 @@
+/* Camera card: live snapshot refresh, cover-state badge, ROI calibration,
+   and a Chart.js plugin that draws "in use" bands on the temperature chart.
+
+   The plugin is registered on the existing tempChart (exposed by index.html
+   inline script). We poll /api/camera/status and /usage independently from
+   the chart's own /history poll — fewer races, simpler retry logic. */
+
+(function () {
+  'use strict';
+
+  // -- DOM --
+  var card    = document.getElementById('cam-card');
+  if (!card) return;             // server didn't render the card; subsystem is off
+  var img     = document.getElementById('cam-img');
+  var empty   = document.getElementById('cam-empty');
+  var meta    = document.getElementById('cam-meta');
+  var coverEl = document.getElementById('cam-cover');
+  var canvas  = document.getElementById('cam-roi-canvas');
+  var btnRoi  = document.getElementById('cam-roi-btn');
+  var roiActs = document.getElementById('cam-roi-actions');
+  var btnCancel = document.getElementById('cam-roi-cancel');
+  var btnSave   = document.getElementById('cam-roi-save');
+  var btnClear  = document.getElementById('cam-roi-clear');
+  var recapLink = document.getElementById('cam-recap-link');
+  var tlLink    = document.getElementById('cam-tl-link');
+
+  function isoDate() {
+    var d = new Date();
+    function pad(n) { return ('0' + n).slice(-2); }
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+  recapLink.href = '/recap?date=' + isoDate();
+  tlLink.href    = '/timelapse?date=' + isoDate();
+
+  function fmtAge(s) {
+    if (s == null) return '';
+    if (s < 60) return Math.round(s) + ' s';
+    if (s < 3600) return Math.round(s / 60) + ' min';
+    return Math.round(s / 3600) + ' h';
+  }
+
+  // -- snapshot refresh --
+  // Use last_frame_at as the cache-bust so we only re-download when there's
+  // actually a new frame (saves bandwidth on iPhone polling).
+  var lastShownAt = 0;
+  function updateImage(snap) {
+    if (!snap || !snap.frame_at) {
+      img.hidden = true; empty.hidden = false; return;
+    }
+    if (snap.frame_at !== lastShownAt) {
+      img.src = '/camera.jpg?ts=' + Math.floor(snap.frame_at);
+      lastShownAt = snap.frame_at;
+    }
+    img.hidden = false; empty.hidden = true;
+  }
+
+  function updateMeta(snap) {
+    if (!snap || !snap.enabled) { meta.textContent = ''; return; }
+    var bits = [];
+    if (snap.age_s != null) bits.push('🕒 ' + fmtAge(snap.age_s));
+    if (snap.error) bits.push('⚠️ ' + snap.error.split('\n')[0].slice(0, 50));
+    if (snap.protect_enabled) bits.push('👤 motion');
+    meta.textContent = bits.join(' · ');
+  }
+
+  function updateCover(snap) {
+    var c = snap && snap.cover;
+    coverEl.classList.remove('cover-on', 'cover-off', 'cover-unknown');
+    if (!c || !c.state) { coverEl.textContent = 'Couvercle —'; coverEl.classList.add('cover-unknown'); return; }
+    var pct = Math.round((c.confidence || 0) * 100);
+    if (c.state === 'on') {
+      coverEl.textContent = '🛡️ Couvercle ON (' + pct + '%)';
+      coverEl.classList.add('cover-on');
+    } else if (c.state === 'off') {
+      coverEl.textContent = '⚠️ Couvercle OFF (' + pct + '%)';
+      coverEl.classList.add('cover-off');
+    } else {
+      coverEl.textContent = 'Couvercle — ' + (c.reason || 'inconnu');
+      coverEl.classList.add('cover-unknown');
+    }
+  }
+
+  // -- /api/camera/status loop --
+  async function pollStatus() {
+    try {
+      var r = await fetch('/api/camera/status');
+      if (!r.ok) return;
+      var snap = await r.json();
+      if (!snap.enabled) return;
+      updateImage(snap);
+      updateMeta(snap);
+      updateCover(snap);
+    } catch (e) { /* network blip; try next tick */ }
+  }
+
+  // -- usage-overlay plugin on the temperature chart --
+  var usagePlugin = {
+    id: 'usageOverlay',
+    beforeDatasetsDraw: function (chart) {
+      var its = chart.$usage || [];
+      if (!its.length || !chart.scales || !chart.scales.x) return;
+      var ctx = chart.ctx;
+      var area = chart.chartArea;
+      var x = chart.scales.x;
+      ctx.save();
+      ctx.fillStyle = 'rgba(34,197,94,0.18)';   // soft green
+      for (var i = 0; i < its.length; i++) {
+        var it = its[i];
+        var x0 = x.getPixelForValue(it.start * 1000);
+        var x1 = x.getPixelForValue(it.end * 1000);
+        if (x1 < area.left || x0 > area.right) continue;
+        var L = Math.max(x0, area.left);
+        var R = Math.min(x1, area.right);
+        ctx.fillRect(L, area.top, R - L, area.bottom - area.top);
+      }
+      ctx.restore();
+    },
+  };
+
+  var pluginRegistered = false;
+  function registerWhenReady() {
+    if (window.tempChart && window.Chart && !pluginRegistered) {
+      window.Chart.register(usagePlugin);
+      pluginRegistered = true;
+    }
+  }
+  window.addEventListener('tempchart:ready', registerWhenReady);
+  registerWhenReady();   // in case chart was built before this script loaded
+
+  async function pollUsage() {
+    try {
+      var r = await fetch('/usage?hours=168');     // match the chart's default 7 d
+      if (!r.ok) return;
+      var j = await r.json();
+      if (!j.enabled) return;
+      if (window.tempChart) {
+        window.tempChart.$usage = j.intervals || [];
+        window.tempChart.update('none');
+      }
+    } catch (e) { /* try next tick */ }
+  }
+
+  // -- ROI calibration ---------------------------------------------------
+  // Draw a rectangle on top of the live image; POST {x,y,w,h} mapped to the
+  // FRAME's native pixels (the camera returns ~1280x720 jpeg) so the backend
+  // ROI is independent of the rendered CSS size.
+  var calibrating = false;
+  var drag = null;          // {sx, sy} (canvas px) while dragging
+  var roiPx = null;         // current rectangle in canvas px
+  var naturalScale = { x: 1, y: 1 };
+
+  function setCalibrating(on) {
+    calibrating = on;
+    canvas.hidden = !on;
+    roiActs.hidden = !on;
+    btnRoi.hidden = on;
+    if (on) sizeCanvas();
+    else { roiPx = null; clearCanvas(); }
+  }
+  function sizeCanvas() {
+    if (!img.naturalWidth) return;
+    var rect = img.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    naturalScale.x = img.naturalWidth / rect.width;
+    naturalScale.y = img.naturalHeight / rect.height;
+  }
+  function clearCanvas() {
+    if (!canvas.getContext) return;
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  function drawRoi() {
+    if (!roiPx) return;
+    var ctx = canvas.getContext('2d');
+    clearCanvas();
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 2;
+    ctx.fillStyle = 'rgba(56,189,248,0.20)';
+    ctx.fillRect(roiPx.x, roiPx.y, roiPx.w, roiPx.h);
+    ctx.strokeRect(roiPx.x, roiPx.y, roiPx.w, roiPx.h);
+  }
+  function pointerXY(ev) {
+    var rect = canvas.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  }
+  canvas.addEventListener('pointerdown', function (ev) {
+    if (!calibrating) return;
+    canvas.setPointerCapture(ev.pointerId);
+    drag = pointerXY(ev);
+    roiPx = { x: drag.x, y: drag.y, w: 0, h: 0 };
+    drawRoi();
+  });
+  canvas.addEventListener('pointermove', function (ev) {
+    if (!calibrating || !drag) return;
+    var p = pointerXY(ev);
+    roiPx = {
+      x: Math.min(drag.x, p.x), y: Math.min(drag.y, p.y),
+      w: Math.abs(p.x - drag.x), h: Math.abs(p.y - drag.y),
+    };
+    drawRoi();
+  });
+  canvas.addEventListener('pointerup', function () { drag = null; });
+
+  btnRoi.addEventListener('click', function () { setCalibrating(true); });
+  btnCancel.addEventListener('click', function () { setCalibrating(false); });
+  btnClear.addEventListener('click', async function () {
+    try { await fetch('/api/camera/roi', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: 'null'}); }
+    catch (e) {}
+    setCalibrating(false);
+  });
+  btnSave.addEventListener('click', async function () {
+    if (!roiPx || roiPx.w < 8 || roiPx.h < 8) return;
+    var natural = {
+      x: Math.round(roiPx.x * naturalScale.x),
+      y: Math.round(roiPx.y * naturalScale.y),
+      w: Math.round(roiPx.w * naturalScale.x),
+      h: Math.round(roiPx.h * naturalScale.y),
+    };
+    try {
+      var r = await fetch('/api/camera/roi', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(natural),
+      });
+      if (!r.ok) { console.warn('ROI save failed', r.status); return; }
+    } catch (e) { console.warn(e); return; }
+    setCalibrating(false);
+  });
+
+  // -- start loops --
+  pollStatus();
+  setInterval(pollStatus, 5000);
+  pollUsage();
+  setInterval(pollUsage, 30000);
+})();

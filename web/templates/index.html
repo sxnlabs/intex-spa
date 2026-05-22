@@ -41,6 +41,34 @@
       <div class="chart-wrap" id="chart-wrap"><canvas id="tempChart"></canvas></div>
       <p class="chart-empty" id="chart-empty">Historique en cours de constitution…</p>
         </section>
+
+        {% if camera_enabled %}
+        <section class="cam-card" id="cam-card">
+          <div class="cam-top">
+            <span class="cam-title">Caméra</span>
+            <span class="cam-meta" id="cam-meta"></span>
+          </div>
+          <div class="cam-frame" id="cam-frame">
+            <img id="cam-img" alt="Aperçu spa" hidden>
+            <div class="cam-empty" id="cam-empty">Image en attente…</div>
+            <canvas class="cam-roi-canvas" id="cam-roi-canvas" hidden></canvas>
+          </div>
+          <div class="cam-row">
+            <span class="cam-badge" id="cam-cover">Couvercle —</span>
+            <div class="cam-actions">
+              <a class="cam-btn" id="cam-recap-link" href="#">Récap</a>
+              <a class="cam-btn" id="cam-tl-link" href="#">Timelapse</a>
+              <button type="button" class="cam-btn" id="cam-roi-btn">Calibrer</button>
+            </div>
+          </div>
+          <div class="cam-row cam-roi-actions" id="cam-roi-actions" hidden>
+            <button type="button" class="cam-btn" id="cam-roi-cancel">Annuler</button>
+            <button type="button" class="cam-btn" id="cam-roi-clear">Effacer</button>
+            <button type="button" class="cam-btn cam-btn-primary" id="cam-roi-save">Enregistrer</button>
+          </div>
+          <p class="cam-note">Détection du couvercle expérimentale — vue partielle.</p>
+        </section>
+        {% endif %}
       </div><!-- /col-main -->
 
       <aside class="col-side">
@@ -156,7 +184,11 @@
           }
         };
         if (chart) { chart.data = data; chart.options = opts; chart.update('none'); }
-        else { chart = new Chart(document.getElementById('tempChart'), { type: 'line', data: data, options: opts }); }
+        else {
+          chart = new Chart(document.getElementById('tempChart'), { type: 'line', data: data, options: opts });
+          window.tempChart = chart;   // camera.js attaches its usage-overlay plugin to this
+          window.dispatchEvent(new CustomEvent('tempchart:ready'));
+        }
       }
 
       function wireRange() {
@@ -175,5 +207,6 @@
     })();
   </script>
   <script src="/static/schedule.js"></script>
+  {% if camera_enabled %}<script src="/static/camera.js"></script>{% endif %}
 </body>
 </html>

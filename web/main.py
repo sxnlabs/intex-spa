@@ -23,14 +23,17 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from intex_spa import protocol
+from intex_spa import camera as cam_mod
+from intex_spa import cover_detect, protocol
+from intex_spa.camera import CameraSnapshot, UsageStore
 from intex_spa.client import SpaUnreachable
 from intex_spa.history import TempHistory
+from intex_spa.protect_client import ProtectPoller
 from intex_spa.scheduler import Scheduler
 from intex_spa.supervisor import Supervisor
 from intex_spa.weather import GUIPAVAS_LAT, GUIPAVAS_LON, WeatherClient
@@ -72,6 +75,7 @@ def create_app(
     weather_lat: float = GUIPAVAS_LAT,
     weather_lon: float = GUIPAVAS_LON,
     weather_cache_path: str | None = "state/weather.json",
+    camera_config_path: str | None = "state/camera.json",
 ) -> FastAPI:
     weather = (
         WeatherClient(weather_lat, weather_lon, cache_path=weather_cache_path)
@@ -89,6 +93,47 @@ def create_app(
     scheduler = Scheduler(supervisor, config_path=schedule_path, weather=weather)
     secret = auth.load_or_create_secret(secret_path) if password else b""
 
+    # -- camera subsystem (master switch via state/camera.json) ----------
+    # weather pattern: instantiate once, hold None when unconfigured; every
+    # route checks `camera is None` and degrades cleanly. No env vars.
+    camera_config = cam_mod.load_config(camera_config_path)
+    if camera_config is not None:
+        def _classify_cover(frame_path):
+            # only run when an ROI is calibrated; classify() itself bails out
+            # cleanly without pillow installed (returns "unknown")
+            roi = camera_config.get("roi")
+            if not roi:
+                return
+            result = cover_detect.classify(frame_path, roi)
+            cover_detect.save_state(camera_config["cover_state_path"], result)
+
+        camera = CameraSnapshot(
+            camera_config["rtsps_url"],
+            frame_path=camera_config["frame_path"],
+            history_dir=camera_config["history_dir"],
+            poll_seconds=camera_config["poll_seconds"],
+            timelapse_every_seconds=camera_config["timelapse_every_seconds"],
+            timelapse_retention_days=camera_config["timelapse_retention_days"],
+            timelapse_fps=camera_config["timelapse_fps"],
+            jpeg_quality=camera_config["jpeg_quality"],
+            snapshot_max_width=camera_config["snapshot_max_width"],
+            ffmpeg_bin=camera_config["ffmpeg"],
+            ffmpeg_extra_args=camera_config["ffmpeg_extra_args"],
+            post_grab=_classify_cover,
+        )
+        usage = UsageStore(path=camera_config["usage_path"])
+        prot_cfg = camera_config.get("protect") or {}
+        protect = ProtectPoller(
+            prot_cfg.get("host", ""),
+            prot_cfg.get("user", ""),
+            prot_cfg.get("pass", ""),
+            usage,
+        )
+    else:
+        camera = None
+        usage = None
+        protect = None
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if weather is not None:
@@ -97,9 +142,17 @@ def create_app(
             asyncio.create_task(weather.refresh(force=True))
         await supervisor.start()
         await scheduler.start()
+        if camera is not None:
+            await camera.start()
+        if protect is not None:
+            await protect.start()  # no-op if creds missing / uiprotect not installed
         try:
             yield
         finally:
+            if protect is not None:
+                await protect.stop()
+            if camera is not None:
+                await camera.stop()
             await scheduler.stop()
             await supervisor.stop()
 
@@ -107,6 +160,11 @@ def create_app(
     app.state.supervisor = supervisor
     app.state.scheduler = scheduler
     app.state.weather = weather
+    app.state.camera = camera
+    app.state.usage = usage
+    app.state.protect = protect
+    app.state.camera_config = camera_config
+    app.state.camera_config_path = camera_config_path
     app.mount("/static", StaticFiles(directory=str(_BASE / "static")), name="static")
 
     if password:
@@ -149,7 +207,13 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         return templates.TemplateResponse(
-            request, "index.html", {"s": supervisor.state, "spa_host": host}
+            request,
+            "index.html",
+            {
+                "s": supervisor.state,
+                "spa_host": host,
+                "camera_enabled": camera is not None,
+            },
         )
 
     @app.get("/panel", response_class=HTMLResponse)
@@ -216,6 +280,106 @@ def create_app(
     async def healthz():
         s = supervisor.state
         return {"online": s["online"], "updated_at": s["updated_at"], "error": s["error"]}
+
+    # -- camera endpoints (all degrade to {"enabled": false} when off) ----
+    @app.get("/api/camera/status")
+    async def camera_status():
+        if camera is None:
+            return {"enabled": False}
+        snap = camera.snapshot()
+        snap["enabled"] = True
+        snap["protect_enabled"] = bool(protect and protect.enabled)
+        snap["roi"] = (camera_config or {}).get("roi")
+        # last persisted cover state (None if never run / no pillow / no ROI)
+        if camera_config:
+            snap["cover"] = cover_detect.load_state(camera_config["cover_state_path"])
+        return snap
+
+    @app.get("/camera.jpg")
+    async def camera_jpg():
+        if camera is None or camera.last_frame_at is None:
+            raise HTTPException(status_code=404, detail="no frame")
+        return FileResponse(
+            str(camera.frame_path),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/api/camera/roi")
+    async def camera_set_roi(request: Request):
+        if camera is None or not camera_config:
+            raise HTTPException(status_code=503, detail="camera disabled")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        if body is None:
+            new_roi = None
+        else:
+            try:
+                new_roi = {
+                    "x": int(body["x"]), "y": int(body["y"]),
+                    "w": int(body["w"]), "h": int(body["h"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="roi needs {x, y, w, h}")
+            if new_roi["w"] <= 0 or new_roi["h"] <= 0:
+                raise HTTPException(status_code=400, detail="roi w/h must be > 0")
+        camera_config["roi"] = new_roi
+        cam_mod.save_config(app.state.camera_config_path, camera_config)
+        return {"ok": True, "roi": new_roi}
+
+    @app.get("/usage")
+    async def usage_json(hours: float = 24.0):
+        if usage is None:
+            return {"enabled": False, "intervals": []}
+        return {"enabled": True, "intervals": usage.recent(hours=hours)}
+
+    @app.get("/timelapse")
+    async def timelapse(date: str):
+        if camera is None:
+            raise HTTPException(status_code=503, detail="camera disabled")
+        try:
+            _dt.datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        mp4 = await asyncio.to_thread(camera.generate_timelapse, date)
+        if mp4 is None:
+            raise HTTPException(status_code=404, detail=f"no frames for {date}")
+        return FileResponse(str(mp4), media_type="video/mp4")
+
+    @app.get("/recap", response_class=HTMLResponse)
+    async def recap(request: Request, date: str | None = None):
+        if camera is None:
+            raise HTTPException(status_code=503, detail="camera disabled")
+        d = date or _dt.date.today().isoformat()
+        try:
+            day = _dt.datetime.strptime(d, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        # Day window in local epoch seconds (matches history.t and usage.{start,end})
+        start = _dt.datetime.combine(day, _dt.time(0, 0)).timestamp()
+        end = start + 86400
+        pts = [p for p in supervisor.history.recent(hours=24 * 8)
+               if start <= p["t"] < end and p.get("cur") is not None]
+        temps = [p["cur"] for p in pts]
+        intervals = []
+        if usage is not None:
+            intervals = [it for it in usage.recent(hours=24 * 8)
+                         if it["end"] >= start and it["start"] < end]
+        total_use = sum(max(0.0, min(it["end"], end) - max(it["start"], start))
+                        for it in intervals)
+        return templates.TemplateResponse(
+            request, "recap.html",
+            {
+                "date": d,
+                "min_t": min(temps) if temps else None,
+                "max_t": max(temps) if temps else None,
+                "samples": len(pts),
+                "intervals": intervals,
+                "total_use_minutes": round(total_use / 60),
+            },
+        )
 
     @app.get("/events")
     async def events(request: Request):

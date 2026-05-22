@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Récap · {{ date }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>📅 Récap · {{ date }}</h1>
+      <p class="spa-ip"><a href="/">← Retour</a></p>
+    </header>
+
+    <section class="cam-card">
+      <div class="cam-top">
+        <span class="cam-title">🌡️ Température</span>
+      </div>
+      {% if samples %}
+        <div class="cam-row">
+          <span class="cam-badge">min {{ min_t }}°</span>
+          <span class="cam-badge">max {{ max_t }}°</span>
+          <span class="cam-meta">{{ samples }} échantillons</span>
+        </div>
+      {% else %}
+        <p class="cam-note">Aucune mesure pour cette date.</p>
+      {% endif %}
+    </section>
+
+    <section class="cam-card">
+      <div class="cam-top">
+        <span class="cam-title">👤 Activité près du spa</span>
+        <span class="cam-meta">{{ total_use_minutes }} min cumulées</span>
+      </div>
+      {% if intervals %}
+        <ul style="margin: 10px 0 0; padding: 0; list-style: none; font-size: 0.85rem; line-height: 1.5;">
+          {% for it in intervals %}
+            <li>· {{ (it.start|int)|string }} → {{ (it.end|int)|string }} <em style="color: var(--muted)">({{ ((it.end - it.start) / 60)|round(1) }} min)</em></li>
+          {% endfor %}
+        </ul>
+        <p class="cam-note">Détection caméra partielle — « activité près du spa », pas « dans le spa ».</p>
+      {% else %}
+        <p class="cam-note">Aucune détection.</p>
+      {% endif %}
+    </section>
+
+    <section class="cam-card">
+      <div class="cam-top">
+        <span class="cam-title">🎞️ Timelapse</span>
+      </div>
+      <video src="/timelapse?date={{ date }}" controls preload="metadata"
+             style="width: 100%; margin-top: 10px; border-radius: 12px; background: var(--card-hi);"></video>
+      <p class="cam-note">Généré à la volée à partir des frames archivées (≈ 1/min). Reposez la page si le mp4 vient d'être créé.</p>
+    </section>
+  </main>
+</body>
+</html>
