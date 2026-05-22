@@ -54,19 +54,55 @@
             <canvas class="cam-roi-canvas" id="cam-roi-canvas" hidden></canvas>
           </div>
           <div class="cam-row">
-            <span class="cam-badge" id="cam-cover">Couvercle —</span>
+            <span class="cam-badge" id="cam-cover">Housse —</span>
             <div class="cam-actions">
               <a class="cam-btn" id="cam-recap-link" href="#">Récap</a>
               <a class="cam-btn" id="cam-tl-link" href="#">Timelapse</a>
-              <button type="button" class="cam-btn" id="cam-roi-btn">Calibrer</button>
+              <button type="button" class="cam-btn cam-btn-icon" id="cam-settings-btn" aria-label="Réglages">⚙</button>
             </div>
           </div>
-          <div class="cam-row cam-roi-actions" id="cam-roi-actions" hidden>
-            <button type="button" class="cam-btn" id="cam-roi-cancel">Annuler</button>
-            <button type="button" class="cam-btn" id="cam-roi-clear">Effacer</button>
-            <button type="button" class="cam-btn cam-btn-primary" id="cam-roi-save">Enregistrer</button>
+
+          <div class="cam-settings" id="cam-settings" hidden>
+            <div class="cam-settings-section">
+              <div class="cam-settings-label">État de la housse</div>
+              <div class="cam-segmented" role="radiogroup" aria-label="État de la housse">
+                <button type="button" class="cam-seg" data-force="auto"    role="radio">Auto</button>
+                <button type="button" class="cam-seg" data-force="on"      role="radio">En place</button>
+                <button type="button" class="cam-seg" data-force="off"     role="radio">Retirée</button>
+              </div>
+              <p class="cam-meta" id="cam-force-help">Auto = laisse l'algo décider à partir de l'image.</p>
+            </div>
+
+            <div class="cam-settings-section">
+              <div class="cam-settings-label">Zone d'analyse</div>
+              <div class="cam-actions">
+                <button type="button" class="cam-btn" id="cam-roi-btn">Redessiner</button>
+                <button type="button" class="cam-btn" id="cam-roi-clear-saved">Effacer</button>
+              </div>
+            </div>
+
+            <div class="cam-settings-section">
+              <div class="cam-settings-label">Apprendre l'apparence</div>
+              <p class="cam-meta" id="cam-cover-help">Clique l'état actuel pour enregistrer une référence visuelle.</p>
+              <div class="cam-actions">
+                <button type="button" class="cam-btn" id="cam-cover-on">Housse en place</button>
+                <button type="button" class="cam-btn" id="cam-cover-off">Housse retirée</button>
+                <button type="button" class="cam-btn" id="cam-cover-reset">Réinitialiser</button>
+              </div>
+            </div>
+
+            <p class="cam-note">Détection visuelle expérimentale — vue partielle de la caméra.</p>
           </div>
-          <p class="cam-note">Détection du couvercle expérimentale — vue partielle.</p>
+
+          <!-- shown only during ROI drag mode, sits below the image so the drag
+               area stays free of UI chrome -->
+          <div class="cam-row cam-roi-actions" id="cam-roi-actions" hidden>
+            <span class="cam-meta">Trace un rectangle sur la bâche puis enregistre.</span>
+            <div class="cam-actions">
+              <button type="button" class="cam-btn" id="cam-roi-cancel">Annuler</button>
+              <button type="button" class="cam-btn cam-btn-primary" id="cam-roi-save">Enregistrer</button>
+            </div>
+          </div>
         </section>
         {% endif %}
       </div><!-- /col-main -->

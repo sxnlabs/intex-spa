@@ -393,3 +393,150 @@ async def test_index_includes_camera_card_when_enabled(tmp_path):
         r = await c.get("/")
         assert "cam-card" in r.text
         assert "/static/camera.js" in r.text
+        # housse, not couvercle — UI convention
+        assert "Housse" in r.text
+
+
+# -- cover state: forced override -------------------------------------------
+async def test_cover_force_on_off_auto_round_trip(tmp_path):
+    spa = FakeSpa()
+    cfg_path = tmp_path / "camera.json"
+    _write_config(cfg_path, rtsps_url="rtsps://stub/x")
+    async with app_for(spa, camera_config_path=str(cfg_path)) as c:
+        # default is auto (None)
+        assert (await c.get("/api/camera/status")).json().get("forced_state") in (None, "")
+
+        # force ON
+        r = await c.post("/api/camera/cover/state?state=on")
+        assert r.status_code == 200 and r.json()["forced_state"] == "on"
+        assert json.loads(cfg_path.read_text())["cover_forced_state"] == "on"
+
+        # force OFF
+        r2 = await c.post("/api/camera/cover/state?state=off")
+        assert r2.json()["forced_state"] == "off"
+        assert json.loads(cfg_path.read_text())["cover_forced_state"] == "off"
+
+        # back to auto
+        r3 = await c.post("/api/camera/cover/state?state=auto")
+        assert r3.json()["forced_state"] is None
+        assert json.loads(cfg_path.read_text())["cover_forced_state"] is None
+
+
+async def test_cover_force_invalid_state_400(tmp_path):
+    spa = FakeSpa()
+    cfg_path = tmp_path / "camera.json"
+    _write_config(cfg_path, rtsps_url="rtsps://stub/x")
+    async with app_for(spa, camera_config_path=str(cfg_path)) as c:
+        assert (await c.post("/api/camera/cover/state?state=maybe")).status_code == 400
+
+
+async def test_cover_force_503_when_disabled():
+    spa = FakeSpa()
+    async with app_for(spa) as c:  # no camera config
+        assert (await c.post("/api/camera/cover/state?state=on")).status_code == 503
+
+
+# -- cover_detect: forced_state short-circuits classification ---------------
+def test_cover_detect_forced_state_returns_immediately(tmp_path):
+    from intex_spa import cover_detect
+    # No deps required for the forced path itself — but we want luma/std too.
+    # Without pillow, luma/std stay None; state still locks to the forced value.
+    out_on = cover_detect.classify(
+        tmp_path / "absent.jpg", roi=None, forced_state="on",
+    )
+    assert out_on["state"] == "on"
+    assert out_on["confidence"] == 1.0
+    assert out_on["forced"] is True
+
+    out_off = cover_detect.classify(
+        tmp_path / "absent.jpg", roi=None, forced_state="off",
+    )
+    assert out_off["state"] == "off"
+    assert out_off["forced"] is True
+
+    # Invalid forced_state falls through to the normal path → unknown (no ROI)
+    out_none = cover_detect.classify(
+        tmp_path / "absent.jpg", roi=None, forced_state="maybe",
+    )
+    assert out_none["state"] == "unknown"
+    assert out_none["forced"] is False
+
+
+# -- cover_detect: baseline classifiers --------------------------------------
+def test_cover_detect_nearest_baseline_picks_closer(tmp_path):
+    """Both baselines set: classifier returns the closer one in (luma, std) space."""
+    from unittest.mock import patch
+    from intex_spa import cover_detect
+
+    with patch.object(cover_detect, "HAVE_DEPS", True), \
+         patch.object(cover_detect, "sample", return_value=(60.0, 15.0)):
+        # baseline_on=(60,15) → distance 0, baseline_off=(200, 50) → ~145
+        out = cover_detect.classify(
+            tmp_path / "any.jpg",
+            roi={"x": 0, "y": 0, "w": 10, "h": 10},
+            baseline_on={"luma": 60, "std": 15},
+            baseline_off={"luma": 200, "std": 50},
+        )
+    assert out["state"] == "on"
+    assert "nearest baseline ON" in out["reason"]
+
+
+def test_cover_detect_single_baseline_radius(tmp_path):
+    """With only one baseline, classify trusts it when close, else stays unknown."""
+    from unittest.mock import patch
+    from intex_spa import cover_detect
+
+    # Close to the ON baseline → state=on
+    with patch.object(cover_detect, "HAVE_DEPS", True), \
+         patch.object(cover_detect, "sample", return_value=(60.0, 15.0)):
+        out = cover_detect.classify(
+            tmp_path / "any.jpg",
+            roi={"x": 0, "y": 0, "w": 10, "h": 10},
+            baseline_on={"luma": 60, "std": 15},
+        )
+    assert out["state"] == "on"
+
+    # Far from the ON baseline → unknown (need OFF baseline)
+    with patch.object(cover_detect, "HAVE_DEPS", True), \
+         patch.object(cover_detect, "sample", return_value=(180.0, 50.0)):
+        out = cover_detect.classify(
+            tmp_path / "any.jpg",
+            roi={"x": 0, "y": 0, "w": 10, "h": 10},
+            baseline_on={"luma": 60, "std": 15},
+        )
+    assert out["state"] == "unknown"
+    assert "far from ON baseline" in out["reason"]
+
+
+# -- cover calibrate / reset endpoints --------------------------------------
+async def test_cover_calibrate_needs_roi(tmp_path):
+    spa = FakeSpa()
+    cfg_path = tmp_path / "camera.json"
+    _write_config(cfg_path, rtsps_url="rtsps://stub/x")  # roi=None
+    async with app_for(spa, camera_config_path=str(cfg_path)) as c:
+        r = await c.post("/api/camera/cover/calibrate?state=on")
+        assert r.status_code == 400
+
+
+async def test_cover_calibrate_invalid_state(tmp_path):
+    spa = FakeSpa()
+    cfg_path = tmp_path / "camera.json"
+    _write_config(cfg_path, rtsps_url="rtsps://stub/x",
+                  roi={"x": 0, "y": 0, "w": 10, "h": 10})
+    async with app_for(spa, camera_config_path=str(cfg_path)) as c:
+        r = await c.post("/api/camera/cover/calibrate?state=neither")
+        assert r.status_code == 400
+
+
+async def test_cover_reset_clears_baselines(tmp_path):
+    spa = FakeSpa()
+    cfg_path = tmp_path / "camera.json"
+    _write_config(cfg_path, rtsps_url="rtsps://stub/x",
+                  cover_baseline_on={"luma": 60, "std": 15, "at": 1},
+                  cover_baseline_off={"luma": 200, "std": 50, "at": 2})
+    async with app_for(spa, camera_config_path=str(cfg_path)) as c:
+        r = await c.post("/api/camera/cover/reset")
+        assert r.status_code == 200
+        on_disk = json.loads(cfg_path.read_text())
+        assert on_disk["cover_baseline_on"] is None
+        assert on_disk["cover_baseline_off"] is None

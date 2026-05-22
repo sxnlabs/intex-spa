@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import datetime as _dt
 import os
+import time as _time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -104,7 +105,12 @@ def create_app(
             roi = camera_config.get("roi")
             if not roi:
                 return
-            result = cover_detect.classify(frame_path, roi)
+            result = cover_detect.classify(
+                frame_path, roi,
+                baseline_on=camera_config.get("cover_baseline_on"),
+                baseline_off=camera_config.get("cover_baseline_off"),
+                forced_state=camera_config.get("cover_forced_state"),
+            )
             cover_detect.save_state(camera_config["cover_state_path"], result)
 
         camera = CameraSnapshot(
@@ -293,6 +299,11 @@ def create_app(
         # last persisted cover state (None if never run / no pillow / no ROI)
         if camera_config:
             snap["cover"] = cover_detect.load_state(camera_config["cover_state_path"])
+            snap["baselines"] = {
+                "on": camera_config.get("cover_baseline_on"),
+                "off": camera_config.get("cover_baseline_off"),
+            }
+            snap["forced_state"] = camera_config.get("cover_forced_state")
         return snap
 
     @app.get("/camera.jpg")
@@ -328,6 +339,65 @@ def create_app(
         camera_config["roi"] = new_roi
         cam_mod.save_config(app.state.camera_config_path, camera_config)
         return {"ok": True, "roi": new_roi}
+
+    @app.post("/api/camera/cover/calibrate")
+    async def camera_cover_calibrate(state: str):
+        """Capture the current ROI's (luma, std) as a baseline for `state`.
+
+        After the user has clicked once with cover ON and once with cover OFF,
+        the classifier swaps to nearest-baseline — self-tuned to this scene.
+        """
+        if camera is None or not camera_config:
+            raise HTTPException(status_code=503, detail="camera disabled")
+        if state not in ("on", "off"):
+            raise HTTPException(status_code=400, detail="state must be 'on' or 'off'")
+        roi = camera_config.get("roi")
+        if not roi:
+            raise HTTPException(status_code=400, detail="calibrate the ROI first")
+        try:
+            luma, std = await asyncio.to_thread(
+                cover_detect.sample, camera_config["frame_path"], roi,
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=409, detail="no frame yet — wait one poll")
+        except RuntimeError as e:    # pillow/numpy missing
+            raise HTTPException(status_code=503, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        baseline = {"luma": luma, "std": std, "at": _time.time()}
+        camera_config[f"cover_baseline_{state}"] = baseline
+        cam_mod.save_config(app.state.camera_config_path, camera_config)
+        # re-classify immediately so the UI badge updates without waiting for next poll
+        await asyncio.to_thread(_classify_cover, camera_config["frame_path"])
+        return {
+            "ok": True,
+            "state": state,
+            "baseline": baseline,
+            "have_both": bool(camera_config.get("cover_baseline_on")
+                              and camera_config.get("cover_baseline_off")),
+        }
+
+    @app.post("/api/camera/cover/reset")
+    async def camera_cover_reset():
+        if camera is None or not camera_config:
+            raise HTTPException(status_code=503, detail="camera disabled")
+        camera_config["cover_baseline_on"] = None
+        camera_config["cover_baseline_off"] = None
+        cam_mod.save_config(app.state.camera_config_path, camera_config)
+        return {"ok": True}
+
+    @app.post("/api/camera/cover/state")
+    async def camera_cover_state(state: str = ""):
+        """Force the cover state. `state` ∈ {on, off, auto}; auto clears the override."""
+        if camera is None or not camera_config:
+            raise HTTPException(status_code=503, detail="camera disabled")
+        if state not in ("on", "off", "auto"):
+            raise HTTPException(status_code=400, detail="state must be on/off/auto")
+        forced = state if state in ("on", "off") else None
+        camera_config["cover_forced_state"] = forced
+        cam_mod.save_config(app.state.camera_config_path, camera_config)
+        await asyncio.to_thread(_classify_cover, camera_config["frame_path"])
+        return {"ok": True, "forced_state": forced}
 
     @app.get("/usage")
     async def usage_json(hours: float = 24.0):

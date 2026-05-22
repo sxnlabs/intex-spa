@@ -217,6 +217,7 @@ header h1 {
   position: absolute; inset: 0; display: grid; place-items: center;
   font-size: 0.85rem; color: var(--muted);
 }
+.cam-empty[hidden] { display: none; }  /* same trap as img[hidden] above */
 .cam-roi-canvas { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
 .cam-row {
   margin-top: 12px; display: flex; gap: 10px; align-items: center;
@@ -242,6 +243,34 @@ header h1 {
 .cam-btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .cam-btn-primary:hover { background: var(--accent); color: #fff; border-color: var(--accent); filter: brightness(1.05); }
 .cam-note { margin: 10px 0 0; font-size: 0.72rem; color: var(--muted); line-height: 1.35; }
+.cam-btn-icon { padding: 5px 9px; font-size: 0.95rem; line-height: 1; }
+.cam-settings {
+  margin-top: 12px; padding: 12px;
+  background: color-mix(in srgb, var(--card-hi) 50%, transparent);
+  border-radius: 12px; display: grid; gap: 14px;
+}
+.cam-settings[hidden] { display: none; }
+.cam-settings-section { display: grid; gap: 8px; }
+.cam-settings-label {
+  font-size: 0.7rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.cam-settings .cam-actions { gap: 6px; }
+.cam-settings .cam-note { margin: 0; }
+
+/* segmented control — 3-way selector for the force-state override */
+.cam-segmented {
+  display: inline-flex; padding: 3px;
+  background: color-mix(in srgb, var(--bg2) 50%, var(--card));
+  border-radius: 999px; gap: 0;
+}
+.cam-seg {
+  border: 0; background: transparent; color: var(--muted);
+  font-size: 0.78rem; font-weight: 600; padding: 6px 14px;
+  border-radius: 999px; cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.cam-seg.active { background: var(--accent); color: #fff; }
+.cam-seg:not(.active):hover { color: var(--fg); }
 
 /* scheduler card */
 .sched-card { background: var(--card); border-radius: var(--radius); padding: 18px; margin-top: 16px; box-shadow: var(--shadow); }

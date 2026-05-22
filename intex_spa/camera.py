@@ -36,6 +36,9 @@ DEFAULT_CONFIG = {
     "poll_seconds": 10.0,
     "protect": {"host": "", "user": "", "pass": ""},
     "roi": None,                            # cover-detection ROI: {x,y,w,h} or None
+    "cover_baseline_on": None,              # {luma, std} captured by the calibrate endpoint
+    "cover_baseline_off": None,             # idem; both present ⇒ nearest-baseline classifier
+    "cover_forced_state": None,             # "on"|"off" overrides the classifier; null = auto
     "frame_path": "state/cam.jpg",
     "history_dir": "state/cam_history",
     "usage_path": "state/usage.jsonl",

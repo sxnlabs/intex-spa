@@ -16,11 +16,17 @@
   var meta    = document.getElementById('cam-meta');
   var coverEl = document.getElementById('cam-cover');
   var canvas  = document.getElementById('cam-roi-canvas');
-  var btnRoi  = document.getElementById('cam-roi-btn');
-  var roiActs = document.getElementById('cam-roi-actions');
-  var btnCancel = document.getElementById('cam-roi-cancel');
-  var btnSave   = document.getElementById('cam-roi-save');
-  var btnClear  = document.getElementById('cam-roi-clear');
+  var btnSettings = document.getElementById('cam-settings-btn');
+  var settings    = document.getElementById('cam-settings');
+  var btnRoi      = document.getElementById('cam-roi-btn');
+  var btnRoiClearSaved = document.getElementById('cam-roi-clear-saved');
+  var roiActs     = document.getElementById('cam-roi-actions');
+  var btnCancel   = document.getElementById('cam-roi-cancel');
+  var btnSave     = document.getElementById('cam-roi-save');
+  var btnCoverOn  = document.getElementById('cam-cover-on');
+  var btnCoverOff = document.getElementById('cam-cover-off');
+  var btnCoverRst = document.getElementById('cam-cover-reset');
+  var coverHelp   = document.getElementById('cam-cover-help');
   var recapLink = document.getElementById('cam-recap-link');
   var tlLink    = document.getElementById('cam-tl-link');
 
@@ -66,18 +72,35 @@
   function updateCover(snap) {
     var c = snap && snap.cover;
     coverEl.classList.remove('cover-on', 'cover-off', 'cover-unknown');
-    if (!c || !c.state) { coverEl.textContent = 'Couvercle —'; coverEl.classList.add('cover-unknown'); return; }
-    var pct = Math.round((c.confidence || 0) * 100);
+    var forced = !!(c && c.forced);
+    if (!c || !c.state) { coverEl.textContent = 'Housse —'; coverEl.classList.add('cover-unknown'); return; }
+    var prefix = forced ? '✋ ' : '';                 // ✋ marker when forced
+    var suffix = forced ? '' : ' · ' + Math.round((c.confidence || 0) * 100) + '%';
     if (c.state === 'on') {
-      coverEl.textContent = '🛡️ Couvercle ON (' + pct + '%)';
+      coverEl.textContent = prefix + 'Housse en place' + suffix;
       coverEl.classList.add('cover-on');
     } else if (c.state === 'off') {
-      coverEl.textContent = '⚠️ Couvercle OFF (' + pct + '%)';
+      coverEl.textContent = prefix + 'Housse retirée' + suffix;
       coverEl.classList.add('cover-off');
     } else {
-      coverEl.textContent = 'Couvercle — ' + (c.reason || 'inconnu');
+      coverEl.textContent = 'Housse — détection incertaine';
       coverEl.classList.add('cover-unknown');
     }
+    // calibration helper: show baseline status
+    if (snap && snap.baselines && coverHelp) {
+      var b = snap.baselines;
+      var have_on  = !!(b.on  && typeof b.on.luma  === 'number');
+      var have_off = !!(b.off && typeof b.off.luma === 'number');
+      var pieces = [];
+      pieces.push(have_on  ? ('en place ✓ luma '  + Math.round(b.on.luma)  + ' std ' + Math.round(b.on.std))  : 'en place —');
+      pieces.push(have_off ? ('retirée ✓ luma ' + Math.round(b.off.luma) + ' std ' + Math.round(b.off.std)) : 'retirée —');
+      coverHelp.textContent = pieces.join(' · ');
+    }
+    // segmented selector: highlight current force-state
+    var current = snap.forced_state || 'auto';
+    document.querySelectorAll('.cam-seg').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-force') === current);
+    });
   }
 
   // -- /api/camera/status loop --
@@ -204,13 +227,20 @@
   });
   canvas.addEventListener('pointerup', function () { drag = null; });
 
-  btnRoi.addEventListener('click', function () { setCalibrating(true); });
-  btnCancel.addEventListener('click', function () { setCalibrating(false); });
-  btnClear.addEventListener('click', async function () {
-    try { await fetch('/api/camera/roi', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: 'null'}); }
-    catch (e) {}
-    setCalibrating(false);
-  });
+  function setCalibratingAndClose(v) {
+    setCalibrating(v);
+    if (v && settings) settings.hidden = true;  // hide gear panel while dragging
+  }
+  btnRoi.addEventListener('click', function () { setCalibratingAndClose(true); });
+  btnCancel.addEventListener('click', function () { setCalibratingAndClose(false); });
+  if (btnRoiClearSaved) {
+    btnRoiClearSaved.addEventListener('click', async function () {
+      try {
+        await fetch('/api/camera/roi', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: 'null'});
+      } catch (e) {}
+      pollStatus();
+    });
+  }
   btnSave.addEventListener('click', async function () {
     if (!roiPx || roiPx.w < 8 || roiPx.h < 8) return;
     var natural = {
@@ -227,8 +257,51 @@
       });
       if (!r.ok) { console.warn('ROI save failed', r.status); return; }
     } catch (e) { console.warn(e); return; }
-    setCalibrating(false);
+    setCalibratingAndClose(false);
   });
+
+  // -- settings panel toggle (gear icon) --------------------------------
+  if (btnSettings) {
+    btnSettings.addEventListener('click', function () {
+      settings.hidden = !settings.hidden;
+      btnSettings.classList.toggle('cam-btn-primary', !settings.hidden);
+    });
+  }
+
+  // -- segmented "Auto / En place / Retirée" force-state selector ------
+  document.querySelectorAll('.cam-seg').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var state = btn.getAttribute('data-force');
+      try {
+        var r = await fetch('/api/camera/cover/state?state=' + state, {method: 'POST'});
+        if (!r.ok) { console.warn('force state failed', r.status); return; }
+      } catch (e) { console.warn(e); return; }
+      pollStatus();
+    });
+  });
+  async function calibrateCover(state) {
+    try {
+      var r = await fetch('/api/camera/cover/calibrate?state=' + state, {method: 'POST'});
+      if (!r.ok) {
+        var msg = await r.text();
+        if (coverHelp) coverHelp.textContent = 'Erreur ' + r.status + ' — ' + msg.slice(0, 120);
+        return;
+      }
+      pollStatus();   // refresh badge + helper immediately
+    } catch (e) {
+      if (coverHelp) coverHelp.textContent = 'Erreur réseau';
+    }
+  }
+  if (btnCoverOn)  btnCoverOn .addEventListener('click', function () { calibrateCover('on');  });
+  if (btnCoverOff) btnCoverOff.addEventListener('click', function () { calibrateCover('off'); });
+  if (btnCoverRst) {
+    btnCoverRst.addEventListener('click', async function () {
+      try {
+        await fetch('/api/camera/cover/reset', {method: 'POST'});
+        pollStatus();
+      } catch (e) {}
+    });
+  }
 
   // -- start loops --
   pollStatus();
