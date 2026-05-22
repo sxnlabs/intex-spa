@@ -13,6 +13,30 @@ experimental spa-cover ON/OFF detection), and a launchd service that's
 debugged for the silent failure modes you'll hit otherwise. Built for one
 specific Mac → spa setup; the code is licensed permissively so you can fork.
 
+## Screenshots
+
+### Desktop
+
+![Desktop layout — temperature gauge, toggles, 7-day chart, camera, weather, scheduler](docs/screenshots/desktop-overview.png)
+
+*Two-column desktop layout: spa controls + temperature history on the left,
+weather + schedule on the right. The chart shades user-configured "in use"
+intervals (from UniFi Protect person-detection) over the water-temp line so a
+sudden dip lines up with a soak.*
+
+![Camera card with the settings panel open — desktop](docs/screenshots/desktop-camera-settings.png)
+
+*Camera card detail with the ⚙ settings panel open: housse (spa cover) state,
+three-way **Auto / En place / Retirée** manual override, ROI redraw, one-click
+visual-baseline learning. Cover detection is intentionally experimental — only
+a partial view of the spa is in frame.*
+
+### Mobile
+
+![Camera card with settings panel — mobile](docs/screenshots/mobile-camera-settings.png)
+
+*Single-column stack on phones (primary use-case via ngrok / Tailscale).*
+
 ## Layout
 
 ```
