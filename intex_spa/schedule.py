@@ -109,8 +109,12 @@ def save_config(path: str | Path, cfg: dict) -> dict:
 
 
 # -- decision engine ----------------------------------------------------------
-def _active_setpoint(heat_rules: list, now: datetime, eco: int) -> tuple[int, str]:
-    """The temp from the most recent heat-rule event at or before `now` (wraps days)."""
+def _active_setpoint(heat_rules: list, now: datetime, eco: int) -> tuple[int, dict]:
+    """The temp from the most recent heat-rule event at or before `now` (wraps days).
+
+    Returns `(temp, reason)` where `reason` is a structured dict — the UI layer
+    translates and formats it. See module docstring for the reason shapes.
+    """
     best_dt: datetime | None = None
     best_temp = eco
     for back in range(8):
@@ -122,14 +126,18 @@ def _active_setpoint(heat_rules: list, now: datetime, eco: int) -> tuple[int, st
                 if cand <= now and (best_dt is None or cand > best_dt):
                     best_dt, best_temp = cand, int(r["temp"])
     if best_dt is None:
-        return eco, f"eco {eco}° (no active heat rule)"
-    return best_temp, f"setpoint {best_temp}° (rule {best_dt:%a %H:%M})"
+        return eco, {"kind": "setpoint_eco", "temp": eco}
+    return best_temp, {
+        "kind": "setpoint_rule",
+        "temp": best_temp,
+        "rule_at": best_dt.strftime("%a %H:%M"),
+    }
 
 
 def _ready_by_setpoint(ready_by, now, current_temp, rate):
-    """If we're inside a pre-heat window, the temp to aim for (else None)."""
+    """If we're inside a pre-heat window, the temp to aim for (else None, {})."""
     best = None
-    reason = ""
+    reason: dict = {}
     for rb in ready_by:
         if now.weekday() not in rb["days"]:
             continue
@@ -143,7 +151,7 @@ def _ready_by_setpoint(ready_by, now, current_temp, rate):
         start = target_dt - timedelta(hours=lead_h)
         if start <= now <= target_dt and (best is None or rb["temp"] > best):
             best = int(rb["temp"])
-            reason = f"pre-heat to {best}° for {rb['time']}"
+            reason = {"kind": "preheat", "temp": best, "for_time": rb["time"]}
     return best, reason
 
 
@@ -155,9 +163,9 @@ def evaluate(
 ) -> Desired:
     """Pure: compute the desired spa state for `now`."""
     if not cfg.get("enabled"):
-        return Desired(reasons=["scheduler disabled"])
+        return Desired(reasons=[{"kind": "scheduler_disabled"}])
 
-    reasons: list[str] = []
+    reasons: list[dict] = []
     rate = heat_rate or float(cfg.get("heat_rate_c_per_h", 1.0))
 
     setpoint, why = _active_setpoint(cfg["heat_rules"], now, int(cfg["eco_temp"]))
@@ -171,9 +179,10 @@ def evaluate(
     # call for heat while below setpoint; let the spa's thermostat hold at setpoint
     call_for_heat = current_temp is None or current_temp < setpoint
     heater = call_for_heat
-    reasons.append(
-        f"heating ({current_temp}° < {setpoint}°)" if call_for_heat else f"at setpoint ({setpoint}°)"
-    )
+    if call_for_heat:
+        reasons.append({"kind": "heating", "current": current_temp, "target": setpoint})
+    else:
+        reasons.append({"kind": "at_setpoint", "target": setpoint})
 
     in_filter = any(
         now.weekday() in w["days"] and _in_window(now.time(), w["start"], w["end"])
@@ -181,7 +190,7 @@ def evaluate(
     )
     if cfg["filter_windows"] or heater:
         filt: bool | None = in_filter or heater  # heating needs circulation
-        reasons.append("filter " + ("on" if filt else "off"))
+        reasons.append({"kind": "filter_on" if filt else "filter_off"})
     else:
         filt = None  # user didn't configure filtration and not heating: don't manage it
 
@@ -312,7 +321,9 @@ def effective_heat_rate(points: list[dict], air: float | None, *,
     if coeffs is not None and water is not None:
         r_gross, k_loss = coeffs
         rate = predict_heat_rate(water, air, r_gross, k_loss)  # already clamped
-        explain.update(source="calibrated", r_gross=r_gross, k_loss=k_loss,
+        # k_loss kept at 4 decimals internally for the model; rounded to 2 for
+        # display in the explain dict so the UI doesn't print 11.7287.
+        explain.update(source="calibrated", r_gross=r_gross, k_loss=round(k_loss, 2),
                        water=water, effective=rate)
         return rate, explain
 

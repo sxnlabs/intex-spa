@@ -216,6 +216,16 @@ header h1 {
 .wx-now { margin-top: 8px; font-size: 0.95rem; font-weight: 600; }
 .wx-algo { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--card-hi); }
 .wx-algo-head { font-size: 0.8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.wx-algo-now-head, .wx-algo-rate-head {
+  margin-top: 12px; font-size: 0.68rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7;
+}
+.algo-now-list {
+  margin: 6px 0 0; padding: 0; list-style: none;
+  display: grid; gap: 4px;
+  font-size: 0.85rem; line-height: 1.4;
+}
+.algo-now-list li { padding-left: 0; }
 .wx-line { margin-top: 8px; font-size: 0.85rem; line-height: 1.4; }
 .wx-line b { color: var(--accent); }
 .wx-note { margin: 10px 0 0; font-size: 0.76rem; color: var(--muted); line-height: 1.35; }

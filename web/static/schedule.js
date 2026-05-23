@@ -144,6 +144,30 @@
     $("#wx-now").textContent = now.join(" · ") || "—";
     $("#wx-age").textContent = fmtAge(w.age_s);
 
+    // What the scheduler decided right now — structured reasons from the plan.
+    // Translation key for each reason is `algo.<kind>`; unknown kinds fall
+    // through to the kind string itself (visible debug signal).
+    var algoNow = $("#wx-algo-now");
+    if (algoNow) {
+      algoNow.textContent = "";
+      var reasons = (w.plan && w.plan.reasons) || [];
+      if (reasons.length) {
+        var ul = document.createElement('ul');
+        ul.className = 'algo-now-list';
+        reasons.forEach(function (r) {
+          // Null/undefined params (e.g. current_temp when the spa is offline)
+          // would render as the literal string "null"; swap to an em-dash so
+          // the line stays readable.
+          var params = {};
+          for (var k in r) params[k] = (r[k] == null ? '—' : r[k]);
+          var li = document.createElement('li');
+          li.textContent = T('algo.' + r.kind, params);
+          ul.appendChild(li);
+        });
+        algoNow.appendChild(ul);
+      }
+    }
+
     var ex = w.rate_explain, rate = $("#wx-rate");
     if (ex) {
       if (ex.source === "calibrated") {

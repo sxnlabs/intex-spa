@@ -305,10 +305,18 @@ def create_app(
             return {"enabled": False}
         snap = weather.snapshot()
         snap["enabled"] = True
-        # surface the scheduler's latest rate reasoning so the UI can explain itself
+        # surface the scheduler's latest plan so the UI can explain what it
+        # is doing right now (structured reasons + technical rate breakdown).
         plan = scheduler.last_plan or {}
         snap["rate_explain"] = plan.get("rate_explain")
         snap["preheat"] = plan.get("preheat")
+        snap["plan"] = {
+            "enabled": plan.get("enabled", False),
+            "setpoint": plan.get("setpoint"),
+            "heater": plan.get("heater"),
+            "filter": plan.get("filter"),
+            "reasons": plan.get("reasons") or [],
+        }
         return snap
 
     @app.get("/api/schedule")

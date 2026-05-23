@@ -31,6 +31,18 @@
 
   "weather.title": "Météo extérieure",
   "weather.algo": "Décision de l'algorithme",
+  "weather.algo_now": "En ce moment",
+  "weather.algo_rate_head": "Cadence de chauffe",
+
+  "algo.scheduler_disabled": "Planificateur désactivé — contrôle manuel uniquement.",
+  "algo.setpoint_eco": "Consigne éco {temp}° (aucune règle de chauffe active).",
+  "algo.setpoint_rule": "Consigne {temp}° d'après la règle de chauffe ({rule_at}).",
+  "algo.preheat": "Pré-chauffe à {temp}° pour {for_time}.",
+  "algo.heating": "🔥 Appelle de la chaleur — {current}° → {target}°.",
+  "algo.at_setpoint": "⏸ À la consigne ({target}°) — le thermostat tient.",
+  "algo.filter_on": "🌀 Filtration en marche.",
+  "algo.filter_off": "Filtration arrêtée.",
+
   "weather.note": "Plus il fait froid/venté dehors, plus la montée est lente — l'algo avance l'heure de départ en conséquence.",
   "weather.feels": "ressenti {value}°",
   "weather.wind": "{value} km/h",

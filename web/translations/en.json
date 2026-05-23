@@ -31,6 +31,18 @@
 
   "weather.title": "Outside weather",
   "weather.algo": "Algorithm decision",
+  "weather.algo_now": "Right now",
+  "weather.algo_rate_head": "Heating rate",
+
+  "algo.scheduler_disabled": "Scheduler is off — manual control only.",
+  "algo.setpoint_eco": "Eco setpoint {temp}° (no active heat rule).",
+  "algo.setpoint_rule": "Setpoint {temp}° from heat rule ({rule_at}).",
+  "algo.preheat": "Pre-heating to {temp}° for {for_time}.",
+  "algo.heating": "🔥 Calling for heat — {current}° → {target}°.",
+  "algo.at_setpoint": "⏸ At setpoint ({target}°) — heater holds.",
+  "algo.filter_on": "🌀 Filter on.",
+  "algo.filter_off": "Filter off.",
+
   "weather.note": "The colder/windier outside, the slower the climb — the algorithm shifts the start time earlier.",
   "weather.feels": "feels like {value}°",
   "weather.wind": "{value} km/h",

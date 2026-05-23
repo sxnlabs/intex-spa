@@ -22,7 +22,7 @@ def at(h, m=0):
 def test_disabled_does_nothing():
     d = S.evaluate(mk(enabled=False), at(8), current_temp=30)
     assert d.setpoint is None and d.heater is None and d.filter is None
-    assert "disabled" in d.reasons[0]
+    assert d.reasons[0]["kind"] == "scheduler_disabled"
 
 
 def test_heat_rule_active_sets_point_and_heater():
@@ -46,7 +46,7 @@ def test_eco_fallback_when_no_rules():
     d = S.evaluate(cfg, at(8), current_temp=25)
     assert d.setpoint == 29
     assert d.heater is True  # 25 < 29
-    assert any("eco" in r for r in d.reasons)
+    assert any(r["kind"] == "setpoint_eco" for r in d.reasons)
 
 
 def test_heat_rule_wraps_to_previous_day():
@@ -69,7 +69,7 @@ def test_ready_by_preheat_window_active():
     d = S.evaluate(cfg, at(9), current_temp=34, heat_rate=4.0)
     assert d.setpoint == 38
     assert d.heater is True
-    assert any("pre-heat" in r for r in d.reasons)
+    assert any(r["kind"] == "preheat" for r in d.reasons)
 
 
 def test_ready_by_uses_base_rate_when_unspecified():
