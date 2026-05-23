@@ -92,8 +92,10 @@ class Scheduler:
         now = now or datetime.now()
         cfg = self.cfg
         if not cfg.get("enabled"):
-            self.last_plan = {"enabled": False, "reasons": ["scheduler disabled"], "at": now.isoformat()}
-            return S.Desired(reasons=["scheduler disabled"])
+            self.last_plan = {"enabled": False,
+                              "reasons": [{"kind": "scheduler_disabled"}],
+                              "at": now.isoformat()}
+            return S.Desired(reasons=[{"kind": "scheduler_disabled"}])
 
         status = (self.sup.state or {}).get("status") or {}
         current = status.get("current_temp")
@@ -132,6 +134,12 @@ class Scheduler:
         return desired
 
     async def _reconcile(self, desired: S.Desired) -> None:
+        if getattr(self.sup, "paused", False):
+            # Pause halts ALL automated traffic to the controller. Keep
+            # last_plan up to date (already done by the caller) so the UI
+            # still shows what *would* happen — but don't write anything.
+            return
+
         def st() -> dict:
             return (self.sup.state or {}).get("status") or {}
 

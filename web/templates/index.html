@@ -36,6 +36,11 @@
           </div>
         </div>
 
+        <div class="pause-row">
+          <div class="banner banner-paused" id="paused-banner" hidden>{{ t('panel.paused_banner') }}</div>
+          <button type="button" class="pause-btn" id="pause-btn">{{ t('panel.pause') }}</button>
+        </div>
+
         <section class="chart-card">
       <div class="chart-head">
         <span>🌡️ {{ t('chart.title') }}</span>
@@ -252,6 +257,30 @@
 
       if (window.Chart) { wireRange(); load(); setInterval(load, 60000); }
       else { document.getElementById('chart-empty').textContent = T('chart.unavailable'); }
+
+      // -- Pause controls: poll /healthz, toggle via POST /api/pause -------
+      var pauseBtn = document.getElementById('pause-btn');
+      var pauseBanner = document.getElementById('paused-banner');
+      function applyPaused(paused) {
+        pauseBtn.textContent = paused ? T('panel.resume') : T('panel.pause');
+        pauseBtn.classList.toggle('is-paused', paused);
+        pauseBanner.hidden = !paused;
+      }
+      async function syncPause() {
+        try {
+          var r = await fetch('/healthz'); if (!r.ok) return;
+          applyPaused((await r.json()).paused);
+        } catch (e) {}
+      }
+      pauseBtn.addEventListener('click', async function () {
+        try {
+          var r = await fetch('/api/pause', {method: 'POST'});
+          if (!r.ok) return;
+          applyPaused((await r.json()).paused);
+        } catch (e) {}
+      });
+      syncPause();
+      setInterval(syncPause, 5000);
     })();
   </script>
   <script src="/static/schedule.js"></script>

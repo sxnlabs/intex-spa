@@ -104,6 +104,24 @@ header h1 {
 .banner-error strong { font-size: 0.95rem; }
 .banner-error small { font-size: 0.75rem; opacity: 0.75; }
 
+/* pause controls — small, sits between the panel and the chart card */
+.pause-row { margin-top: 12px; display: grid; gap: 8px; }
+.banner-paused {
+  /* same shape as .banner, neutral palette so it's clearly informational */
+  background: color-mix(in srgb, var(--muted) 15%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  color: var(--fg); padding: 10px 14px; border-radius: 12px;
+  font-size: 0.78rem; line-height: 1.4;
+}
+.pause-btn {
+  align-self: end; justify-self: end;
+  border: 1px solid var(--card-hi); background: transparent; color: var(--muted);
+  font-size: 0.75rem; font-weight: 600; padding: 6px 14px; border-radius: 999px;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.pause-btn:hover { background: var(--card-hi); color: var(--fg); }
+.pause-btn.is-paused { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 .readout {
   background: var(--card);
   border-radius: var(--radius);

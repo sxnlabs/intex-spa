@@ -89,7 +89,51 @@ async def test_healthz():
     async with app_for(spa) as client:
         r = await client.get("/healthz")
         assert r.status_code == 200
-        assert r.json()["online"] is True
+        body = r.json()
+        assert body["online"] is True
+        assert body["paused"] is False     # default, no one paused yet
+
+
+async def test_pause_toggle_round_trip():
+    spa = FakeSpa()
+    async with app_for(spa) as client:
+        # default is not paused
+        assert (await client.get("/healthz")).json()["paused"] is False
+
+        # POST with no body → toggle on
+        r = await client.post("/api/pause")
+        assert r.status_code == 200 and r.json()["paused"] is True
+        assert (await client.get("/healthz")).json()["paused"] is True
+
+        # explicit off
+        r2 = await client.post("/api/pause?state=off")
+        assert r2.json()["paused"] is False
+
+        # explicit on
+        r3 = await client.post("/api/pause?state=on")
+        assert r3.json()["paused"] is True
+
+        # invalid → 400
+        assert (await client.post("/api/pause?state=maybe")).status_code == 400
+
+
+async def test_pause_blocks_supervisor_refresh():
+    spa = FakeSpa()
+    async with app_for(spa) as client:
+        sup = client.app.state.supervisor
+        original = sup.state["status"]["preset_temp"]
+
+        # Mutate the fake spa while the supervisor is paused — refresh()
+        # should NOT pick up the change because the network call is skipped.
+        sup.set_paused(True)
+        spa.state["preset_temp"] = 40
+        await sup.refresh()
+        assert sup.state["status"]["preset_temp"] == original
+
+        # Resume: next refresh sees the new value.
+        sup.set_paused(False)
+        await sup.refresh()
+        assert sup.state["status"]["preset_temp"] == 40
 
 
 async def test_index_includes_scheduler_ui():

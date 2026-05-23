@@ -338,7 +338,32 @@ def create_app(
     @app.get("/healthz")
     async def healthz():
         s = supervisor.state
-        return {"online": s["online"], "updated_at": s["updated_at"], "error": s["error"]}
+        return {
+            "online": s["online"],
+            "updated_at": s["updated_at"],
+            "error": s["error"],
+            "paused": supervisor.paused,
+        }
+
+    @app.post("/api/pause")
+    async def api_pause(state: str | None = None):
+        """Pause or resume the supervisor poll loop + scheduler reconciliation.
+
+        Query string `state`: `on`/`true`/`1` → pause, `off`/`false`/`0` → resume,
+        anything else (or absent) → toggle the current state.
+        """
+        truthy = {"on", "true", "1", "pause", "paused"}
+        falsy  = {"off", "false", "0", "resume"}
+        if state is None:
+            new = not supervisor.paused
+        elif state.lower() in truthy:
+            new = True
+        elif state.lower() in falsy:
+            new = False
+        else:
+            raise HTTPException(status_code=400, detail="state must be on/off (or omit to toggle)")
+        supervisor.set_paused(new)
+        return {"paused": supervisor.paused}
 
     # -- camera endpoints (all degrade to {"enabled": false} when off) ----
     @app.get("/api/camera/status")

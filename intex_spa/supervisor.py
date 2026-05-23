@@ -34,6 +34,10 @@ class Supervisor:
         self.history = history if history is not None else TempHistory(path=None)
         # returns the current outside air temp (cached, non-blocking) or None
         self.air_provider = air_provider
+        # `paused` halts the poll loop and the scheduler's reconcile writes —
+        # in-memory only on purpose (a service kickstart implies "fresh start").
+        # User-initiated set_field/set_preset still go through (explicit intent).
+        self.paused: bool = False
         self.state: dict = {
             "status": None,      # last decoded status dict, or None until first read
             "online": False,
@@ -103,8 +107,21 @@ class Supervisor:
                 _LOG.exception("history record failed (non-fatal)")
         self._publish()
 
+    # -- pause control ------------------------------------------------------
+    def set_paused(self, on: bool) -> None:
+        """Pause/resume background polling. User actions (set_field / set_preset)
+        keep working — pause only halts automated traffic to the controller."""
+        was = self.paused
+        self.paused = bool(on)
+        if was and not self.paused:
+            # On resume, push a fresh state event so SSE subscribers refresh.
+            self._publish()
+
     # -- operations -----------------------------------------------------------
     async def refresh(self) -> dict:
+        if self.paused:
+            # Skip the network round-trip; keep last known state.
+            return self.state
         try:
             st = await self.client.status()
             self._set_state(status=st, online=True, error=None)
